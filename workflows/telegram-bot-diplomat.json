@@ -1,0 +1,1610 @@
+{
+  "updatedAt": "2026-07-24T11:36:54.767Z",
+  "createdAt": "2026-07-14T16:05:25.290Z",
+  "name": "Telegram Bot-Diplomat - Voice to Business Message",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Бот-Дипломат\\n\\nНовый Telegram-бот: голос -> деловое сообщение.\\n\\nПеред запуском:\\n1. В credential \"Telegram Diplomat Bot - paste token\" вставь токен нового бота.\\n2. OpenAI уже подключен.\\n3. Airtable лимит и память: таблица \"Diplomat Bot Users\", лимит 10/день.",
+        "height": 250,
+        "width": 560
+      },
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -928,
+        -416
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ Boolean($json.message?.voice?.file_id || $json.message?.audio?.file_id) }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "voice"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Voice Or Fallback",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -688,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "🤝 Привет! Я помогу сказать твердо, спокойно и профессионально.\n\nНаговори голосом как есть: что случилось, кому нужно ответить и чего ты хочешь добиться.\n\nМожно эмоционально и без подбора слов. Я уберу лишнюю резкость, сохраню смысл и пришлю готовое деловое сообщение для копирования.\n\nОтправь голосовое, когда будешь готов.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Voice Only Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ \"{telegram_id}='\" + $json.message.from.id + \"'\" }}"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - Find User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -448,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.records || []).length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - User Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -208,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: String($node['Telegram Trigger'].json.message.from.id),\n        chat_id: String($node['Telegram Trigger'].json.message.chat.id),\n        username: $node['Telegram Trigger'].json.message.from.username || '',\n        first_name: $node['Telegram Trigger'].json.message.from.first_name || '',\n        daily_requests: 0,\n        status: 'free',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Create User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        48,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nlet created;\ntry {\n  created = $('Airtable - Create User').first().json.records?.[0];\n} catch (error) {\n  created = null;\n}\nconst message = $('Telegram Trigger').first().json.message || {};\nconst audio = message.voice || message.audio || {};\nconst record = found || created || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nreturn [\n  {\n    json: {\n      record_id: record?.id || '',\n      telegram_id: String(message.from?.id || ''),\n      chat_id: String(message.chat?.id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0),\n      daily_requests: dailyRequests,\n      status,\n      request_log: String(fields.request_log || ''),\n      limit_exceeded: status === 'free' && dailyRequests >= 10\n    }\n  }\n];"
+      },
+      "name": "Code - Normalize Airtable User",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.limit_exceeded }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "limit_exceeded"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Limit Check",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Limit Exhausted",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        768,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id || $node['Telegram Trigger'].json.message.voice?.file_id || $node['Telegram Trigger'].json.message.audio?.file_id }}",
+        "additionalFields": {
+          "mimeType": "audio/ogg"
+        }
+      },
+      "name": "Telegram - Download Voice File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        768,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "ru",
+          "temperature": 0
+        }
+      },
+      "name": "OpenAI - Whisper Transcription",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1248,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = String($json.text || '').trim();\nreturn [{ json: { text, is_valid: text.length >= 5 } }];"
+      },
+      "name": "Code - Validate Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Transcription OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1728,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Не удалось разобрать аудио. Запиши, пожалуйста, еще раз чуть четче: что произошло, кому ответ и какую позицию нужно донести.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Unclear Audio",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1968,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — первоклассный дипломат, медиатор и эксперт по жестким бизнес-коммуникациям.\n\nК тебе поступает сырой текст: расшифровка голосового сообщения, где пользователь эмоционально, резко, саркастично или грубо выражает недовольство коллеге, клиенту, подрядчику или исполнителю.\n\nТвоя задача:\n1. Вычленить суть претензии и ключевые требования пользователя.\n2. Перевести сообщение на безупречный деловой язык.\n3. Сохранить смысл и твердость позиции автора.\n4. Сделать текст вежливым, профессиональным, уважительным, но уверенным.\n5. Избегать заискивания, пассивной агрессии и канцелярского мусора.\n\nВыдай только готовый текст сообщения для отправки адресату. Без вступлений, объяснений и комментариев."
+            },
+            {
+              "content": "={{ \"Расшифровка эмоционального сообщения:\\n\" + $json.text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 1200,
+          "store": false,
+          "textFormat": {
+            "textOptions": {}
+          },
+          "temperature": 0.2
+        }
+      },
+      "name": "OpenAI - GPT-4o-mini Diplomat",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1968,
+        -240
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(message?.content?.find?.((part) => part.type === 'output_text')?.text || message?.content?.[0]?.text || $json.text || '').trim();\nfunction escapeHtml(value) {\n  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\nconst clean = raw.replace(/^\\s*```[a-z]*\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\nconst telegram_text = [\n  '✨ <b>Твое сообщение переведено на дипломатический язык:</b>',\n  '',\n  '<pre>' + escapeHtml(clean) + '</pre>',\n  '',\n  '<i>Нажми на текст выше, чтобы скопировать его и отправить адресату.</i>'\n].join('\\n');\nreturn [{ json: { raw_text: clean, telegram_text } }];"
+      },
+      "name": "Code - Prepare Telegram HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable User'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable User'].json.daily_requests || 0) + 1,\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: $node['Code - Validate Transcription'].json.text,\n        last_result: $node['Code - Prepare Telegram HTML'].json.raw_text,\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable User'].json.request_log || '');\n          const raw = String($node['Code - Validate Transcription'].json.text || '').slice(0, 4000);\n          const result = String($node['Code - Prepare Telegram HTML'].json.raw_text || '').slice(0, 6000);\n          const entry = '[' + new Date().toISOString() + ']\\nRAW: ' + raw + '\\nRESULT: ' + result + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Update Limit and Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2448,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ $node['Code - Prepare Telegram HTML'].json.telegram_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "Telegram - Send Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2688,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Сейчас не получилось подготовить текст. Попробуй переотправить это голосовое еще раз через минуту.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send AI Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2208,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "name": "Schedule Trigger - Daily Reset 00:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "{status}='free'"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - List Free Users For Reset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -688,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({ json: { records: [{ id: record.id, fields: { daily_requests: 0, updated_at: new Date().toISOString() } }] } }));"
+      },
+      "name": "Code - Build Reset Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Airtable - Reset Daily Requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -208,
+        528
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Switch - Voice Or Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Voice Or Fallback": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Find User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Voice Only Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Find User": {
+      "main": [
+        [
+          {
+            "node": "IF - User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - User Exists": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Airtable User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Airtable - Create User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create User": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Airtable User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Airtable User": {
+      "main": [
+        [
+          {
+            "node": "Switch - Limit Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Limit Check": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Limit Exhausted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Download Voice File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Voice File": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Whisper Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Whisper Transcription": {
+      "main": [
+        [
+          {
+            "node": "Code - Validate Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Validate Transcription": {
+      "main": [
+        [
+          {
+            "node": "IF - Transcription OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Transcription OK": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - GPT-4o-mini Diplomat",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Unclear Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - GPT-4o-mini Diplomat": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Telegram HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Telegram HTML": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Update Limit and Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Update Limit and Log": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger - Daily Reset 00:00": {
+      "main": [
+        [
+          {
+            "node": "Airtable - List Free Users For Reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - List Free Users For Reset": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Reset Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Reset Batches": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Reset Daily Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionId": "30aa05e5-b19d-4799-8634-5022c8a5f790",
+  "activeVersionId": "30aa05e5-b19d-4799-8634-5022c8a5f790",
+  "versionCounter": 7,
+  "triggerCount": 2,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-07-24T11:36:54.769Z",
+    "createdAt": "2026-07-24T11:36:54.769Z",
+    "versionId": "30aa05e5-b19d-4799-8634-5022c8a5f790",
+    "workflowId": "92Qiprk4obSJn9Aj",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Бот-Дипломат\\n\\nНовый Telegram-бот: голос -> деловое сообщение.\\n\\nПеред запуском:\\n1. В credential \"Telegram Diplomat Bot - paste token\" вставь токен нового бота.\\n2. OpenAI уже подключен.\\n3. Airtable лимит и память: таблица \"Diplomat Bot Users\", лимит 10/день.",
+          "height": 250,
+          "width": 560
+        },
+        "name": "Setup Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -928,
+          -416
+        ]
+      },
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -928,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ Boolean($json.message?.voice?.file_id || $json.message?.audio?.file_id) }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "voice"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Voice Or Fallback",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          -688,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "🤝 Привет! Я помогу сказать твердо, спокойно и профессионально.\n\nНаговори голосом как есть: что случилось, кому нужно ответить и чего ты хочешь добиться.\n\nМожно эмоционально и без подбора слов. Я уберу лишнюю резкость, сохраню смысл и пришлю готовое деловое сообщение для копирования.\n\nОтправь голосовое, когда будешь готов.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Voice Only Help",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -448,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "={{ \"{telegram_id}='\" + $json.message.from.id + \"'\" }}"
+              },
+              {
+                "name": "maxRecords",
+                "value": "1"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - Find User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -448,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ ($json.records || []).length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - User Exists",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -208,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: String($node['Telegram Trigger'].json.message.from.id),\n        chat_id: String($node['Telegram Trigger'].json.message.chat.id),\n        username: $node['Telegram Trigger'].json.message.from.username || '',\n        first_name: $node['Telegram Trigger'].json.message.from.first_name || '',\n        daily_requests: 0,\n        status: 'free',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Create User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          48,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nlet created;\ntry {\n  created = $('Airtable - Create User').first().json.records?.[0];\n} catch (error) {\n  created = null;\n}\nconst message = $('Telegram Trigger').first().json.message || {};\nconst audio = message.voice || message.audio || {};\nconst record = found || created || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nreturn [\n  {\n    json: {\n      record_id: record?.id || '',\n      telegram_id: String(message.from?.id || ''),\n      chat_id: String(message.chat?.id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0),\n      daily_requests: dailyRequests,\n      status,\n      request_log: String(fields.request_log || ''),\n      limit_exceeded: status === 'free' && dailyRequests >= 10\n    }\n  }\n];"
+        },
+        "name": "Code - Normalize Airtable User",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          288,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.limit_exceeded }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "limit_exceeded"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Limit Check",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          528,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Limit Exhausted",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          768,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $json.file_id || $node['Telegram Trigger'].json.message.voice?.file_id || $node['Telegram Trigger'].json.message.audio?.file_id }}",
+          "additionalFields": {
+            "mimeType": "audio/ogg"
+          }
+        },
+        "name": "Telegram - Download Voice File",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          768,
+          -128
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "audio",
+          "operation": "transcribe",
+          "options": {
+            "language": "ru",
+            "temperature": 0
+          }
+        },
+        "name": "OpenAI - Whisper Transcription",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          1248,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = String($json.text || '').trim();\nreturn [{ json: { text, is_valid: text.length >= 5 } }];"
+        },
+        "name": "Code - Validate Transcription",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1488,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.is_valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - Transcription OK",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1728,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Не удалось разобрать аудио. Запиши, пожалуйста, еще раз чуть четче: что произошло, кому ответ и какую позицию нужно донести.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Unclear Audio",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1968,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gpt-4o-mini"
+          },
+          "responses": {
+            "values": [
+              {
+                "role": "system",
+                "content": "Ты — первоклассный дипломат, медиатор и эксперт по жестким бизнес-коммуникациям.\n\nК тебе поступает сырой текст: расшифровка голосового сообщения, где пользователь эмоционально, резко, саркастично или грубо выражает недовольство коллеге, клиенту, подрядчику или исполнителю.\n\nТвоя задача:\n1. Вычленить суть претензии и ключевые требования пользователя.\n2. Перевести сообщение на безупречный деловой язык.\n3. Сохранить смысл и твердость позиции автора.\n4. Сделать текст вежливым, профессиональным, уважительным, но уверенным.\n5. Избегать заискивания, пассивной агрессии и канцелярского мусора.\n\nВыдай только готовый текст сообщения для отправки адресату. Без вступлений, объяснений и комментариев."
+              },
+              {
+                "content": "={{ \"Расшифровка эмоционального сообщения:\\n\" + $json.text }}"
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {
+            "maxTokens": 1200,
+            "store": false,
+            "textFormat": {
+              "textOptions": {}
+            },
+            "temperature": 0.2
+          }
+        },
+        "name": "OpenAI - GPT-4o-mini Diplomat",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          1968,
+          -240
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(message?.content?.find?.((part) => part.type === 'output_text')?.text || message?.content?.[0]?.text || $json.text || '').trim();\nfunction escapeHtml(value) {\n  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\nconst clean = raw.replace(/^\\s*```[a-z]*\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\nconst telegram_text = [\n  '✨ <b>Твое сообщение переведено на дипломатический язык:</b>',\n  '',\n  '<pre>' + escapeHtml(clean) + '</pre>',\n  '',\n  '<i>Нажми на текст выше, чтобы скопировать его и отправить адресату.</i>'\n].join('\\n');\nreturn [{ json: { raw_text: clean, telegram_text } }];"
+        },
+        "name": "Code - Prepare Telegram HTML",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2208,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable User'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable User'].json.daily_requests || 0) + 1,\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: $node['Code - Validate Transcription'].json.text,\n        last_result: $node['Code - Prepare Telegram HTML'].json.raw_text,\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable User'].json.request_log || '');\n          const raw = String($node['Code - Validate Transcription'].json.text || '').slice(0, 4000);\n          const result = String($node['Code - Prepare Telegram HTML'].json.raw_text || '').slice(0, 6000);\n          const entry = '[' + new Date().toISOString() + ']\\nRAW: ' + raw + '\\nRESULT: ' + result + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Update Limit and Log",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2448,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ $node['Code - Prepare Telegram HTML'].json.telegram_text }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        },
+        "name": "Telegram - Send Result",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2688,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Сейчас не получилось подготовить текст. Попробуй переотправить это голосовое еще раз через минуту.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send AI Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2208,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {}
+            ]
+          }
+        },
+        "name": "Schedule Trigger - Daily Reset 00:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -928,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "{status}='free'"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - List Free Users For Reset",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -688,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({ json: { records: [{ id: record.id, fields: { daily_requests: 0, updated_at: new Date().toISOString() } }] } }));"
+        },
+        "name": "Code - Build Reset Batches",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -448,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV9UHY60S2KB0aV",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {}
+        },
+        "name": "Airtable - Reset Daily Requests",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -208,
+          528
+        ]
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Switch - Voice Or Fallback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Voice Or Fallback": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Find User",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Voice Only Help",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Find User": {
+        "main": [
+          [
+            {
+              "node": "IF - User Exists",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - User Exists": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Airtable User",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Airtable - Create User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Create User": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Airtable User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Airtable User": {
+        "main": [
+          [
+            {
+              "node": "Switch - Limit Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Limit Check": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Limit Exhausted",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Download Voice File",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Voice File": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - Whisper Transcription",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - Whisper Transcription": {
+        "main": [
+          [
+            {
+              "node": "Code - Validate Transcription",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Validate Transcription": {
+        "main": [
+          [
+            {
+              "node": "IF - Transcription OK",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - Transcription OK": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - GPT-4o-mini Diplomat",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Unclear Audio",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - GPT-4o-mini Diplomat": {
+        "main": [
+          [
+            {
+              "node": "Code - Prepare Telegram HTML",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Prepare Telegram HTML": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Update Limit and Log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Update Limit and Log": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger - Daily Reset 00:00": {
+        "main": [
+          [
+            {
+              "node": "Airtable - List Free Users For Reset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - List Free Users For Reset": {
+        "main": [
+          [
+            {
+              "node": "Code - Build Reset Batches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Build Reset Batches": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Reset Daily Requests",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Mihail Rogal",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-07-24T11:36:56.097Z",
+        "workflowId": "92Qiprk4obSJn9Aj",
+        "versionId": "30aa05e5-b19d-4799-8634-5022c8a5f790",
+        "event": "activated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-24T11:36:55.127Z",
+        "workflowId": "92Qiprk4obSJn9Aj",
+        "versionId": "30aa05e5-b19d-4799-8634-5022c8a5f790",
+        "event": "deactivated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      }
+    ]
+  }
+}
