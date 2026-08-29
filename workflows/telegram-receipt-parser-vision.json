@@ -1,0 +1,2850 @@
+{
+  "updatedAt": "2026-07-24T11:36:59.413Z",
+  "createdAt": "2026-07-14T16:14:41.138Z",
+  "name": "Telegram Receipt Parser - Vision to Google Sheets",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ИИ-Разборщик чеков\\n\\nНовый Telegram-бот: фото чека/скрин транзакции -> OpenAI Vision -> Google Sheets -> Telegram отчет.\\n\\nПеред запуском:\\n1. В credential \"Telegram Receipt Parser Bot - paste token\" вставь токен нового бота.\\n2. В ноде \"Google Sheets - Append Expense Row\" выбери свою финансовую Google Таблицу и лист.\\n3. OpenAI и Airtable уже подключены.\\n4. Airtable лимит/логирование: таблица \"Receipt Parser Users\", лимит 10/день.\\n\\nКолонки Google Sheets: Дата, Магазин/Сервис, Сумма, Валюта, Категория, Описание покупок.",
+        "height": 300,
+        "width": 620
+      },
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -944,
+        -416
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -656,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ $node['Code - Receipt Setup Router'].json.spreadsheet_url\n  ? [\n      '💳 Таблица расходов уже подключена.',\n      '',\n      'Пришли фото чека или скрин банковской операции. Я распознаю сумму, дату, магазин и категорию, а потом добавлю расход в твою таблицу.',\n      '',\n      'Открыть таблицу: ' + $node['Code - Receipt Setup Router'].json.spreadsheet_url\n    ].join('\\n')\n  : [\n      '💳 Привет! Я помогу вести расходы без ручного ввода.',\n      '',\n      'Сначала подключим твою личную таблицу: пришли email Google-аккаунта, куда дать доступ редактора.',\n      '',\n      'После этого ты сможешь просто отправлять фото чеков и скрины банковских операций.'\n    ].join('\\n')\n}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Photo Only Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -320,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst photos = message.photo || [];\nconst photo = photos[photos.length - 1] || {};\nreturn [\n  {\n    json: {\n      telegram_id: String(message.from?.id || ''),\n      chat_id: String(message.chat?.id || ''),\n      username: message.from?.username || '',\n      first_name: message.from?.first_name || '',\n      file_id: photo.file_id || '',\n      file_size: Number(photo.file_size || 0)\n    }\n  }\n];"
+      },
+      "name": "Code - Normalize Photo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ \"{telegram_id}='\" + $json.telegram_id + \"'\" }}"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - Find User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -208,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.records || []).length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - User Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        48,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: String($node['Code - Normalize Photo'].json.telegram_id),\n        chat_id: String($node['Code - Normalize Photo'].json.chat_id),\n        username: $node['Code - Normalize Photo'].json.username || '',\n        first_name: $node['Code - Normalize Photo'].json.first_name || '',\n        daily_requests: 0,\n        status: 'free',\n        onboarding_status: 'need_email',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Create User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nlet created;\ntry { created = $('Airtable - Create User').first().json.records?.[0]; } catch (error) { created = null; }\nconst record = found || created || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nreturn [{\n  json: {\n    record_id: record?.id || '',\n    telegram_id: $node['Code - Normalize Photo'].json.telegram_id,\n    chat_id: $node['Code - Normalize Photo'].json.chat_id,\n    daily_requests: dailyRequests,\n    status,\n    request_log: String(fields.request_log || ''),\n    email: String(fields.email || ''),\n    spreadsheet_id: spreadsheetId,\n    spreadsheet_url: String(fields.spreadsheet_url || ''),\n    sheet_title: String(fields.sheet_title || ''),\n    file_id: $node['Code - Normalize Photo'].json.file_id,\n    missing_spreadsheet: !spreadsheetId,\n    limit_exceeded: status === 'free' && dailyRequests >= 10\n  }\n}];"
+      },
+      "name": "Code - Normalize Airtable User",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.limit_exceeded }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "limit_exceeded"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Limit Check",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        928,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Limit Exhausted",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1168,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id || $node['Code - Normalize Photo'].json.file_id }}",
+        "additionalFields": {
+          "mimeType": "image/jpeg"
+        }
+      },
+      "name": "Telegram - Download Receipt Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1056,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const binary = $input.first().binary?.data;\nif (!binary) {\n  throw new Error('No image binary metadata found');\n}\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nif (!buffer || buffer.length === 0) {\n  throw new Error('No image binary buffer found');\n}\nconst mime = binary.mimeType || 'image/jpeg';\nconst imageUrl = 'data:' + mime + ';base64,' + buffer.toString('base64');\nconst today = new Date().toISOString().slice(0, 10);\nconst prompt = \"Ты — аккуратный OCR-аналитик чеков и банковских транзакций.\\n\\nПроанализируй изображение: это может быть фото кассового чека, скриншот банковской операции, терминальный чек или онлайн-квитанция.\\n\\nВерни только строгий JSON без Markdown и без пояснений:\\n{\\n  \\\"date\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"merchant\\\": \\\"Название магазина/сервиса\\\",\\n  \\\"amount\\\": 1250.00,\\n  \\\"currency\\\": \\\"RUB\\\",\\n  \\\"category\\\": \\\"Категория расходов\\\",\\n  \\\"items_summary\\\": \\\"Краткий список покупок или суть транзакции\\\"\\n}\\n\\nПравила:\\n- Если дата не видна, используй сегодняшнюю дату из сообщения пользователя.\\n- amount должен быть числом, без пробелов и символов валюты.\\n- currency нормализуй как RUB, BYN, USD, EUR или другую ISO-подобную валюту.\\n- Категорию определи самостоятельно: Продукты, Кафе, Транспорт, Такси, Маркетплейсы, Аптека, Связь, Подписки, Развлечения, Дом, Одежда, Другое.\\n- Если магазин не виден, укажи \\\"Не распознано\\\".\\n- Если сумму невозможно понять, amount = 0 и category = \\\"Требует проверки\\\".\" + '\\n\\nСегодня: ' + today;\nreturn [\n  {\n    json: {\n      body: {\n        model: 'gpt-4o',\n        temperature: 0,\n        response_format: { type: 'json_object' },\n        messages: [\n          { role: 'system', content: 'You return only valid JSON.' },\n          {\n            role: 'user',\n            content: [\n              { type: 'text', text: prompt },\n              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } }\n            ]\n          }\n        ]\n      },\n      debug_binary_mime: mime,\n      debug_binary_bytes: buffer.length\n    }\n  }\n];"
+      },
+      "name": "Code - Build OpenAI Vision Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "name": "HTTP - OpenAI Vision Receipt OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1728,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = String($json.raw_ocr_text || $json.choices?.[0]?.message?.content || $json.output_text || $json.text || '').trim();\nconst COL_DATE = '\\u0414\\u0430\\u0442\\u0430';\nconst COL_MERCHANT = '\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441';\nconst COL_AMOUNT = '\\u0421\\u0443\\u043c\\u043c\\u0430';\nconst COL_CURRENCY = '\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430';\nconst COL_CATEGORY = '\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f';\nconst COL_DETAILS = '\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a';\nfunction stripFences(value) {\n  return value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n}\nfunction parseJson(value) {\n  const cleaned = stripFences(value);\n  try { return JSON.parse(cleaned); } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    throw new Error('OpenAI Vision did not return valid JSON');\n  }\n}\nconst data = parseJson(raw);\nconst today = new Date().toISOString().slice(0, 10);\nconst amount = Number(String(data.amount ?? 0).replace(',', '.').replace(/[^0-9.\\-]/g, '')) || 0;\nreturn [{\n  json: {\n    [COL_DATE]: String(data.date || today).slice(0, 10),\n    [COL_MERCHANT]: String(data.merchant || '\\u041d\\u0435 \\u0440\\u0430\\u0441\\u043f\\u043e\\u0437\\u043d\\u0430\\u043d\\u043e').trim(),\n    [COL_AMOUNT]: Math.round(amount * 100) / 100,\n    [COL_CURRENCY]: String(data.currency || 'RUB').trim().toUpperCase(),\n    [COL_CATEGORY]: String(data.category || '\\u0414\\u0440\\u0443\\u0433\\u043e\\u0435').trim(),\n    [COL_DETAILS]: String(data.items_summary || '').trim(),\n    raw_model_output: raw\n  }\n}];"
+      },
+      "name": "Code - Prepare Sheet Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable User'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable User'].json.daily_requests || 0) + 1,\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: 'photo_file_id=' + $node['Code - Normalize Airtable User'].json.file_id,\n        last_result: JSON.stringify($node['Code - Prepare Sheet Row'].json),\n        last_merchant: $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n        last_amount: Number($node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] || 0),\n        last_currency: $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n        last_category: $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n        last_items_summary: $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'],\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable User'].json.request_log || '');\n          const row = $node['Code - Prepare Sheet Row'].json;\n          const sheet = String($node['Code - Normalize Airtable User'].json.spreadsheet_url || $node['Code - Normalize Airtable User'].json.spreadsheet_id || '');\n          const merchant = String(row['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'] || '');\n          const amount = String(row['\\u0421\\u0443\\u043c\\u043c\\u0430'] || '') + ' ' + String(row['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'] || '');\n          const category = String(row['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'] || '');\n          const details = String(row['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'] || '');\n          const entry = '[' + new Date().toISOString() + ']\\nSHEET: ' + sheet + '\\nMERCHANT: ' + merchant + '\\nAMOUNT: ' + amount + '\\nCATEGORY: ' + category + '\\nDETAILS: ' + details + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Update Limit and Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2840,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n'💳 <b>Расход успешно зарегистрирован!</b>',\n'',\n'📅 <b>Дата:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u0414\\u0430\\u0442\\u0430'],\n'🛒 <b>Место:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n'💰 <b>Сумма:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] + ' ' + $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n'🏷️ <b>Категория:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n'📝 <b>Детали:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'],\n'',\n'<b>Расход добавлен в твою финансовую таблицу.</b>',\n$node['Code - Normalize Airtable User'].json.spreadsheet_url ? '<a href=\"' + $node['Code - Normalize Airtable User'].json.spreadsheet_url + '\">Открыть таблицу</a>' : ''\n].filter(Boolean).join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "Telegram - Send Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Сейчас не получилось распознать чек. Попробуй отправить фото еще раз: ровно, без бликов и чтобы сумма была видна.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send AI Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Я распознал расход, но сейчас не смог записать его в таблицу. Пришли email еще раз, и я заново подключу личную таблицу расходов.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Sheet Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2448,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "name": "Schedule Trigger - Daily Reset 00:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "{status}='free'"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - List Free Users For Reset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -688,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({\n  json: { records: [{ id: record.id, fields: { daily_requests: 0, updated_at: new Date().toISOString() } }] }\n}));"
+      },
+      "name": "Code - Build Reset Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Airtable - Reset Daily Requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -208,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ \"{telegram_id}='\" + String($node['Telegram Trigger'].json.message.from.id) + \"'\" }}"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - Find User For Setup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst records = $json.records || [];\nconst record = records[0] || null;\nconst fields = record?.fields || {};\nconst text = String(message.text || message.caption || '').trim();\nconst emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\nconst hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nlet route = 'fallback';\nif (emailMatch) {\n  route = 'create_sheet';\n} else if (hasPhoto && spreadsheetId) {\n  route = 'process_photo';\n} else if (hasPhoto && !spreadsheetId) {\n  route = 'ask_email';\n} else if (text === '/start' && spreadsheetId) {\n  route = 'fallback';\n} else if (text === '/start' || text === '/new' || !spreadsheetId) {\n  route = 'ask_email';\n}\nconst telegramId = String(message.from?.id || '');\nconst firstName = String(message.from?.first_name || '').trim();\nconst username = String(message.from?.username || '').trim();\nconst safeName = (firstName || username || telegramId).replace(/[\\\\/:*?\"<>|]/g, ' ').slice(0, 80).trim();\nreturn [{\n  json: {\n    route,\n    user_exists: Boolean(record?.id),\n    record_id: record?.id || '',\n    telegram_id: telegramId,\n    chat_id: String(message.chat?.id || ''),\n    username,\n    first_name: firstName,\n    email: emailMatch ? emailMatch[0].toLowerCase() : String(fields.email || ''),\n    spreadsheet_id: spreadsheetId,\n    spreadsheet_url: String(fields.spreadsheet_url || ''),\n    sheet_title: '\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b - ' + safeName,\n    onboarding_status: String(fields.onboarding_status || '')\n  }\n}];"
+      },
+      "name": "Code - Receipt Setup Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'ask_email' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ask_email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'create_sheet' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "create_sheet"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'process_photo' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "process_photo"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Receipt Setup Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        656,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "💳 Привет! Я буду вести для тебя личную таблицу расходов.\n\nПришли email Google-аккаунта, куда дать доступ редактора.\n\nЯ сам создам таблицу, а дальше ты сможешь отправлять сюда фото чеков и скрины операций. Я распознаю сумму, магазин, дату, категорию и запишу расход.\n\nНапиши email одним сообщением.\nПример: name@gmail.com",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Ask Email For Sheet",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -48,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.user_exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Setup User Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        784,
+        1232
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Receipt Setup Router'].json.record_id,\n      fields: {\n        email: $node['Code - Receipt Setup Router'].json.email,\n        chat_id: $node['Code - Receipt Setup Router'].json.chat_id,\n        username: $node['Code - Receipt Setup Router'].json.username,\n        first_name: $node['Code - Receipt Setup Router'].json.first_name,\n        onboarding_status: 'creating_sheet',\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Update Setup Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: $node['Code - Receipt Setup Router'].json.telegram_id,\n        chat_id: $node['Code - Receipt Setup Router'].json.chat_id,\n        username: $node['Code - Receipt Setup Router'].json.username,\n        first_name: $node['Code - Receipt Setup Router'].json.first_name,\n        email: $node['Code - Receipt Setup Router'].json.email,\n        daily_requests: 0,\n        status: 'free',\n        onboarding_status: 'creating_sheet',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Create Setup User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1248,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const record = ($json.records || [])[0] || $json;\nif (!record?.id) throw new Error('Airtable setup record was not returned');\nreturn [{\n  json: {\n    record_id: record.id,\n    email: $('Code - Receipt Setup Router').first().json.email,\n    sheet_title: $('Code - Receipt Setup Router').first().json.sheet_title\n  }\n}];"
+      },
+      "name": "Code - Setup Record After Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: { title: $node['Code - Setup Record After Upsert'].json.sheet_title },\n  sheets: [{ properties: { title: '\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b', gridProperties: { rowCount: 1000, columnCount: 6 } } }]\n}) }}",
+        "options": {}
+      },
+      "name": "HTTP - Google Create User Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1664,
+        912
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId + '/values/' + encodeURIComponent('\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b!A1:F1') + '?valueInputOption=RAW' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [[\n  '\\u0414\\u0430\\u0442\\u0430',\n  '\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441',\n  '\\u0421\\u0443\\u043c\\u043c\\u0430',\n  '\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430',\n  '\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f',\n  '\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'\n]] }) }}",
+        "options": {}
+      },
+      "name": "HTTP - Google Initialize Expense Header",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1808,
+        1360
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId + '/permissions?sendNotificationEmail=false' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  role: 'writer',\n  type: 'user',\n  emailAddress: $node['Code - Setup Record After Upsert'].json.email\n}) }}",
+        "options": {}
+      },
+      "name": "HTTP - Google Share Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2432,
+        1344
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Setup Record After Upsert'].json.record_id,\n      fields: {\n        email: $node['Code - Setup Record After Upsert'].json.email,\n        spreadsheet_id: $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId,\n        spreadsheet_url: $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId),\n        sheet_title: $node['Code - Setup Record After Upsert'].json.sheet_title,\n        onboarding_status: 'ready',\n        sheet_created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString(),\n        last_result: 'Personal Google Sheet created and shared with ' + $node['Code - Setup Record After Upsert'].json.email\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Save User Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2752,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n'✅ <b>Готово!</b> Личная таблица расходов создана.',\n'',\n'Доступ редактора выдан на:',\n$node['Code - Setup Record After Upsert'].json.email,\n'',\n'Открыть таблицу: <a href=\"' + ($node['HTTP - Google Create User Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId)) + '\">Google Таблица</a>',\n'',\n'Теперь пришли фото чека или скрин транзакции. Я распознаю расход и добавлю его в таблицу.'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "Telegram - Send Setup Complete",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3152,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Не получилось создать Google Таблицу или выдать доступ. Проверь email и попробуй еще раз. Если ошибка повторится, нужно переподключить Google Sheets/Drive credentials в n8n.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Setup Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2608,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.missing_spreadsheet }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "missing_sheet"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Sheet Ready Check",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        -320
+      ]
+    },
+    {
+      "name": "HTTP - Google Append Expense Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2600,
+        -160
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['Code - Normalize Airtable User'].json.spreadsheet_id + '/values/' + encodeURIComponent('\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b!A:F') + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  values: [[\n    $node['Code - Prepare Sheet Row'].json['\\u0414\\u0430\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n    Number($node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] || 0),\n    $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n    $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a']\n  ]]\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Code - Normalize OpenAI OCR Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -128
+      ],
+      "parameters": {
+        "jsCode": "const content = String($json.choices?.[0]?.message?.content || '').trim();\nif (!content) {\n  const message =\n    $json.error?.message ||\n    $json.message ||\n    $json.description ||\n    'OpenAI Vision did not return choices[0].message.content';\n  return [\n    {\n      json: {\n        ocr_ok: false,\n        error_message: String(message),\n        raw_response: JSON.stringify($json).slice(0, 6000)\n      }\n    }\n  ];\n}\nreturn [\n  {\n    json: {\n      ...$json,\n      ocr_ok: true,\n      raw_ocr_text: content\n    }\n  }\n];"
+      }
+    },
+    {
+      "name": "IF - OpenAI OCR OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2120,
+        -128
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ocr_ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Find User For Setup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Photo": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Find User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Find User": {
+      "main": [
+        [
+          {
+            "node": "IF - User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - User Exists": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Airtable User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Airtable - Create User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create User": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Airtable User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Airtable User": {
+      "main": [
+        [
+          {
+            "node": "Switch - Sheet Ready Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Limit Check": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Limit Exhausted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Download Receipt Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Receipt Photo": {
+      "main": [
+        [
+          {
+            "node": "Code - Build OpenAI Vision Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build OpenAI Vision Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP - OpenAI Vision Receipt OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - OpenAI Vision Receipt OCR": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize OpenAI OCR Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Sheet Row": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Append Expense Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Update Limit and Log": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger - Daily Reset 00:00": {
+      "main": [
+        [
+          {
+            "node": "Airtable - List Free Users For Reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - List Free Users For Reset": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Reset Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Reset Batches": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Reset Daily Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Find User For Setup": {
+      "main": [
+        [
+          {
+            "node": "Code - Receipt Setup Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Receipt Setup Router": {
+      "main": [
+        [
+          {
+            "node": "Switch - Receipt Setup Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Receipt Setup Route": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Ask Email For Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Setup User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code - Normalize Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Photo Only Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Setup User Exists": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Update Setup Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Airtable - Create Setup User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Update Setup Email": {
+      "main": [
+        [
+          {
+            "node": "Code - Setup Record After Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create Setup User": {
+      "main": [
+        [
+          {
+            "node": "Code - Setup Record After Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Setup Record After Upsert": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Create User Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Create User Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Initialize Expense Header",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Initialize Expense Header": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Share Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Share Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Save User Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Save User Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Setup Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Sheet Ready Check": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Ask Email For Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch - Limit Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Append Expense Row": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Update Limit and Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Sheet Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize OpenAI OCR Result": {
+      "main": [
+        [
+          {
+            "node": "IF - OpenAI OCR OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - OpenAI OCR OK": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Sheet Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionId": "05e5e56e-903d-458a-9e7c-13ab4932a72f",
+  "activeVersionId": "05e5e56e-903d-458a-9e7c-13ab4932a72f",
+  "versionCounter": 37,
+  "triggerCount": 2,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-07-24T11:36:59.428Z",
+    "createdAt": "2026-07-24T11:36:59.428Z",
+    "versionId": "05e5e56e-903d-458a-9e7c-13ab4932a72f",
+    "workflowId": "pebCHtqibWu4m20U",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## ИИ-Разборщик чеков\\n\\nНовый Telegram-бот: фото чека/скрин транзакции -> OpenAI Vision -> Google Sheets -> Telegram отчет.\\n\\nПеред запуском:\\n1. В credential \"Telegram Receipt Parser Bot - paste token\" вставь токен нового бота.\\n2. В ноде \"Google Sheets - Append Expense Row\" выбери свою финансовую Google Таблицу и лист.\\n3. OpenAI и Airtable уже подключены.\\n4. Airtable лимит/логирование: таблица \"Receipt Parser Users\", лимит 10/день.\\n\\nКолонки Google Sheets: Дата, Магазин/Сервис, Сумма, Валюта, Категория, Описание покупок.",
+          "height": 300,
+          "width": 620
+        },
+        "name": "Setup Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -944,
+          -416
+        ]
+      },
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -656,
+          352
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ $node['Code - Receipt Setup Router'].json.spreadsheet_url\n  ? [\n      '💳 Таблица расходов уже подключена.',\n      '',\n      'Пришли фото чека или скрин банковской операции. Я распознаю сумму, дату, магазин и категорию, а потом добавлю расход в твою таблицу.',\n      '',\n      'Открыть таблицу: ' + $node['Code - Receipt Setup Router'].json.spreadsheet_url\n    ].join('\\n')\n  : [\n      '💳 Привет! Я помогу вести расходы без ручного ввода.',\n      '',\n      'Сначала подключим твою личную таблицу: пришли email Google-аккаунта, куда дать доступ редактора.',\n      '',\n      'После этого ты сможешь просто отправлять фото чеков и скрины банковских операций.'\n    ].join('\\n')\n}}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Photo Only Help",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -320,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst photos = message.photo || [];\nconst photo = photos[photos.length - 1] || {};\nreturn [\n  {\n    json: {\n      telegram_id: String(message.from?.id || ''),\n      chat_id: String(message.chat?.id || ''),\n      username: message.from?.username || '',\n      first_name: message.from?.first_name || '',\n      file_id: photo.file_id || '',\n      file_size: Number(photo.file_size || 0)\n    }\n  }\n];"
+        },
+        "name": "Code - Normalize Photo",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -400,
+          -64
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "={{ \"{telegram_id}='\" + $json.telegram_id + \"'\" }}"
+              },
+              {
+                "name": "maxRecords",
+                "value": "1"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - Find User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -208,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ ($json.records || []).length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - User Exists",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          48,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: String($node['Code - Normalize Photo'].json.telegram_id),\n        chat_id: String($node['Code - Normalize Photo'].json.chat_id),\n        username: $node['Code - Normalize Photo'].json.username || '',\n        first_name: $node['Code - Normalize Photo'].json.first_name || '',\n        daily_requests: 0,\n        status: 'free',\n        onboarding_status: 'need_email',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Create User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          288,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nlet created;\ntry { created = $('Airtable - Create User').first().json.records?.[0]; } catch (error) { created = null; }\nconst record = found || created || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nreturn [{\n  json: {\n    record_id: record?.id || '',\n    telegram_id: $node['Code - Normalize Photo'].json.telegram_id,\n    chat_id: $node['Code - Normalize Photo'].json.chat_id,\n    daily_requests: dailyRequests,\n    status,\n    request_log: String(fields.request_log || ''),\n    email: String(fields.email || ''),\n    spreadsheet_id: spreadsheetId,\n    spreadsheet_url: String(fields.spreadsheet_url || ''),\n    sheet_title: String(fields.sheet_title || ''),\n    file_id: $node['Code - Normalize Photo'].json.file_id,\n    missing_spreadsheet: !spreadsheetId,\n    limit_exceeded: status === 'free' && dailyRequests >= 10\n  }\n}];"
+        },
+        "name": "Code - Normalize Airtable User",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          528,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.limit_exceeded }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "limit_exceeded"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Limit Check",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          928,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Limit Exhausted",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1168,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $json.file_id || $node['Code - Normalize Photo'].json.file_id }}",
+          "additionalFields": {
+            "mimeType": "image/jpeg"
+          }
+        },
+        "name": "Telegram - Download Receipt Photo",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1056,
+          -320
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const binary = $input.first().binary?.data;\nif (!binary) {\n  throw new Error('No image binary metadata found');\n}\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nif (!buffer || buffer.length === 0) {\n  throw new Error('No image binary buffer found');\n}\nconst mime = binary.mimeType || 'image/jpeg';\nconst imageUrl = 'data:' + mime + ';base64,' + buffer.toString('base64');\nconst today = new Date().toISOString().slice(0, 10);\nconst prompt = \"Ты — аккуратный OCR-аналитик чеков и банковских транзакций.\\n\\nПроанализируй изображение: это может быть фото кассового чека, скриншот банковской операции, терминальный чек или онлайн-квитанция.\\n\\nВерни только строгий JSON без Markdown и без пояснений:\\n{\\n  \\\"date\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"merchant\\\": \\\"Название магазина/сервиса\\\",\\n  \\\"amount\\\": 1250.00,\\n  \\\"currency\\\": \\\"RUB\\\",\\n  \\\"category\\\": \\\"Категория расходов\\\",\\n  \\\"items_summary\\\": \\\"Краткий список покупок или суть транзакции\\\"\\n}\\n\\nПравила:\\n- Если дата не видна, используй сегодняшнюю дату из сообщения пользователя.\\n- amount должен быть числом, без пробелов и символов валюты.\\n- currency нормализуй как RUB, BYN, USD, EUR или другую ISO-подобную валюту.\\n- Категорию определи самостоятельно: Продукты, Кафе, Транспорт, Такси, Маркетплейсы, Аптека, Связь, Подписки, Развлечения, Дом, Одежда, Другое.\\n- Если магазин не виден, укажи \\\"Не распознано\\\".\\n- Если сумму невозможно понять, amount = 0 и category = \\\"Требует проверки\\\".\" + '\\n\\nСегодня: ' + today;\nreturn [\n  {\n    json: {\n      body: {\n        model: 'gpt-4o',\n        temperature: 0,\n        response_format: { type: 'json_object' },\n        messages: [\n          { role: 'system', content: 'You return only valid JSON.' },\n          {\n            role: 'user',\n            content: [\n              { type: 'text', text: prompt },\n              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } }\n            ]\n          }\n        ]\n      },\n      debug_binary_mime: mime,\n      debug_binary_bytes: buffer.length\n    }\n  }\n];"
+        },
+        "name": "Code - Build OpenAI Vision Request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1488,
+          -128
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.body) }}",
+          "options": {}
+        },
+        "name": "HTTP - OpenAI Vision Receipt OCR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1728,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const raw = String($json.raw_ocr_text || $json.choices?.[0]?.message?.content || $json.output_text || $json.text || '').trim();\nconst COL_DATE = '\\u0414\\u0430\\u0442\\u0430';\nconst COL_MERCHANT = '\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441';\nconst COL_AMOUNT = '\\u0421\\u0443\\u043c\\u043c\\u0430';\nconst COL_CURRENCY = '\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430';\nconst COL_CATEGORY = '\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f';\nconst COL_DETAILS = '\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a';\nfunction stripFences(value) {\n  return value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n}\nfunction parseJson(value) {\n  const cleaned = stripFences(value);\n  try { return JSON.parse(cleaned); } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    throw new Error('OpenAI Vision did not return valid JSON');\n  }\n}\nconst data = parseJson(raw);\nconst today = new Date().toISOString().slice(0, 10);\nconst amount = Number(String(data.amount ?? 0).replace(',', '.').replace(/[^0-9.\\-]/g, '')) || 0;\nreturn [{\n  json: {\n    [COL_DATE]: String(data.date || today).slice(0, 10),\n    [COL_MERCHANT]: String(data.merchant || '\\u041d\\u0435 \\u0440\\u0430\\u0441\\u043f\\u043e\\u0437\\u043d\\u0430\\u043d\\u043e').trim(),\n    [COL_AMOUNT]: Math.round(amount * 100) / 100,\n    [COL_CURRENCY]: String(data.currency || 'RUB').trim().toUpperCase(),\n    [COL_CATEGORY]: String(data.category || '\\u0414\\u0440\\u0443\\u0433\\u043e\\u0435').trim(),\n    [COL_DETAILS]: String(data.items_summary || '').trim(),\n    raw_model_output: raw\n  }\n}];"
+        },
+        "name": "Code - Prepare Sheet Row",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2360,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable User'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable User'].json.daily_requests || 0) + 1,\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: 'photo_file_id=' + $node['Code - Normalize Airtable User'].json.file_id,\n        last_result: JSON.stringify($node['Code - Prepare Sheet Row'].json),\n        last_merchant: $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n        last_amount: Number($node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] || 0),\n        last_currency: $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n        last_category: $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n        last_items_summary: $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'],\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable User'].json.request_log || '');\n          const row = $node['Code - Prepare Sheet Row'].json;\n          const sheet = String($node['Code - Normalize Airtable User'].json.spreadsheet_url || $node['Code - Normalize Airtable User'].json.spreadsheet_id || '');\n          const merchant = String(row['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'] || '');\n          const amount = String(row['\\u0421\\u0443\\u043c\\u043c\\u0430'] || '') + ' ' + String(row['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'] || '');\n          const category = String(row['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'] || '');\n          const details = String(row['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'] || '');\n          const entry = '[' + new Date().toISOString() + ']\\nSHEET: ' + sheet + '\\nMERCHANT: ' + merchant + '\\nAMOUNT: ' + amount + '\\nCATEGORY: ' + category + '\\nDETAILS: ' + details + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Update Limit and Log",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2840,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n'💳 <b>Расход успешно зарегистрирован!</b>',\n'',\n'📅 <b>Дата:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u0414\\u0430\\u0442\\u0430'],\n'🛒 <b>Место:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n'💰 <b>Сумма:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] + ' ' + $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n'🏷️ <b>Категория:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n'📝 <b>Детали:</b> ' + $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'],\n'',\n'<b>Расход добавлен в твою финансовую таблицу.</b>',\n$node['Code - Normalize Airtable User'].json.spreadsheet_url ? '<a href=\"' + $node['Code - Normalize Airtable User'].json.spreadsheet_url + '\">Открыть таблицу</a>' : ''\n].filter(Boolean).join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        },
+        "name": "Telegram - Send Result",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          3080,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Сейчас не получилось распознать чек. Попробуй отправить фото еще раз: ровно, без бликов и чтобы сумма была видна.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send AI Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2360,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Я распознал расход, но сейчас не смог записать его в таблицу. Пришли email еще раз, и я заново подключу личную таблицу расходов.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Sheet Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2448,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {}
+            ]
+          }
+        },
+        "name": "Schedule Trigger - Daily Reset 00:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -928,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "{status}='free'"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - List Free Users For Reset",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -688,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({\n  json: { records: [{ id: record.id, fields: { daily_requests: 0, updated_at: new Date().toISOString() } }] }\n}));"
+        },
+        "name": "Code - Build Reset Batches",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -448,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {}
+        },
+        "name": "Airtable - Reset Daily Requests",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -208,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "={{ \"{telegram_id}='\" + String($node['Telegram Trigger'].json.message.from.id) + \"'\" }}"
+              },
+              {
+                "name": "maxRecords",
+                "value": "1"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - Find User For Setup",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          32,
+          368
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst records = $json.records || [];\nconst record = records[0] || null;\nconst fields = record?.fields || {};\nconst text = String(message.text || message.caption || '').trim();\nconst emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\nconst hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nlet route = 'fallback';\nif (emailMatch) {\n  route = 'create_sheet';\n} else if (hasPhoto && spreadsheetId) {\n  route = 'process_photo';\n} else if (hasPhoto && !spreadsheetId) {\n  route = 'ask_email';\n} else if (text === '/start' && spreadsheetId) {\n  route = 'fallback';\n} else if (text === '/start' || text === '/new' || !spreadsheetId) {\n  route = 'ask_email';\n}\nconst telegramId = String(message.from?.id || '');\nconst firstName = String(message.from?.first_name || '').trim();\nconst username = String(message.from?.username || '').trim();\nconst safeName = (firstName || username || telegramId).replace(/[\\\\/:*?\"<>|]/g, ' ').slice(0, 80).trim();\nreturn [{\n  json: {\n    route,\n    user_exists: Boolean(record?.id),\n    record_id: record?.id || '',\n    telegram_id: telegramId,\n    chat_id: String(message.chat?.id || ''),\n    username,\n    first_name: firstName,\n    email: emailMatch ? emailMatch[0].toLowerCase() : String(fields.email || ''),\n    spreadsheet_id: spreadsheetId,\n    spreadsheet_url: String(fields.spreadsheet_url || ''),\n    sheet_title: '\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b - ' + safeName,\n    onboarding_status: String(fields.onboarding_status || '')\n  }\n}];"
+        },
+        "name": "Code - Receipt Setup Router",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          368
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'ask_email' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "ask_email"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'create_sheet' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "create_sheet"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'process_photo' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "process_photo"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Receipt Setup Route",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          656,
+          640
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "💳 Привет! Я буду вести для тебя личную таблицу расходов.\n\nПришли email Google-аккаунта, куда дать доступ редактора.\n\nЯ сам создам таблицу, а дальше ты сможешь отправлять сюда фото чеков и скрины операций. Я распознаю сумму, магазин, дату, категорию и запишу расход.\n\nНапиши email одним сообщением.\nПример: name@gmail.com",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Ask Email For Sheet",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -48,
+          -368
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.user_exists }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - Setup User Exists",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          784,
+          1232
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Receipt Setup Router'].json.record_id,\n      fields: {\n        email: $node['Code - Receipt Setup Router'].json.email,\n        chat_id: $node['Code - Receipt Setup Router'].json.chat_id,\n        username: $node['Code - Receipt Setup Router'].json.username,\n        first_name: $node['Code - Receipt Setup Router'].json.first_name,\n        onboarding_status: 'creating_sheet',\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Update Setup Email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1056,
+          864
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: $node['Code - Receipt Setup Router'].json.telegram_id,\n        chat_id: $node['Code - Receipt Setup Router'].json.chat_id,\n        username: $node['Code - Receipt Setup Router'].json.username,\n        first_name: $node['Code - Receipt Setup Router'].json.first_name,\n        email: $node['Code - Receipt Setup Router'].json.email,\n        daily_requests: 0,\n        status: 'free',\n        onboarding_status: 'creating_sheet',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Create Setup User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1248,
+          1312
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const record = ($json.records || [])[0] || $json;\nif (!record?.id) throw new Error('Airtable setup record was not returned');\nreturn [{\n  json: {\n    record_id: record.id,\n    email: $('Code - Receipt Setup Router').first().json.email,\n    sheet_title: $('Code - Receipt Setup Router').first().json.sheet_title\n  }\n}];"
+        },
+        "name": "Code - Setup Record After Upsert",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1376,
+          880
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  properties: { title: $node['Code - Setup Record After Upsert'].json.sheet_title },\n  sheets: [{ properties: { title: '\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b', gridProperties: { rowCount: 1000, columnCount: 6 } } }]\n}) }}",
+          "options": {}
+        },
+        "name": "HTTP - Google Create User Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1664,
+          912
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId + '/values/' + encodeURIComponent('\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b!A1:F1') + '?valueInputOption=RAW' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ values: [[\n  '\\u0414\\u0430\\u0442\\u0430',\n  '\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441',\n  '\\u0421\\u0443\\u043c\\u043c\\u0430',\n  '\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430',\n  '\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f',\n  '\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a'\n]] }) }}",
+          "options": {}
+        },
+        "name": "HTTP - Google Initialize Expense Header",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1808,
+          1360
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId + '/permissions?sendNotificationEmail=false' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  role: 'writer',\n  type: 'user',\n  emailAddress: $node['Code - Setup Record After Upsert'].json.email\n}) }}",
+          "options": {}
+        },
+        "name": "HTTP - Google Share Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2432,
+          1344
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tblV2NceDG8EkuYPU",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Setup Record After Upsert'].json.record_id,\n      fields: {\n        email: $node['Code - Setup Record After Upsert'].json.email,\n        spreadsheet_id: $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId,\n        spreadsheet_url: $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId),\n        sheet_title: $node['Code - Setup Record After Upsert'].json.sheet_title,\n        onboarding_status: 'ready',\n        sheet_created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString(),\n        last_result: 'Personal Google Sheet created and shared with ' + $node['Code - Setup Record After Upsert'].json.email\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Save User Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2752,
+          1264
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n'✅ <b>Готово!</b> Личная таблица расходов создана.',\n'',\n'Доступ редактора выдан на:',\n$node['Code - Setup Record After Upsert'].json.email,\n'',\n'Открыть таблицу: <a href=\"' + ($node['HTTP - Google Create User Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create User Spreadsheet'].json.spreadsheetId)) + '\">Google Таблица</a>',\n'',\n'Теперь пришли фото чека или скрин транзакции. Я распознаю расход и добавлю его в таблицу.'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        },
+        "name": "Telegram - Send Setup Complete",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          3152,
+          1280
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Не получилось создать Google Таблицу или выдать доступ. Проверь email и попробуй еще раз. Если ошибка повторится, нужно переподключить Google Sheets/Drive credentials в n8n.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Setup Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2608,
+          960
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.missing_spreadsheet }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "missing_sheet"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Sheet Ready Check",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          528,
+          -320
+        ]
+      },
+      {
+        "name": "HTTP - Google Append Expense Row",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2600,
+          -160
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['Code - Normalize Airtable User'].json.spreadsheet_id + '/values/' + encodeURIComponent('\\u0420\\u0430\\u0441\\u0445\\u043e\\u0434\\u044b!A:F') + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  values: [[\n    $node['Code - Prepare Sheet Row'].json['\\u0414\\u0430\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row'].json['\\u041c\\u0430\\u0433\\u0430\\u0437\\u0438\\u043d/\\u0421\\u0435\\u0440\\u0432\\u0438\\u0441'],\n    Number($node['Code - Prepare Sheet Row'].json['\\u0421\\u0443\\u043c\\u043c\\u0430'] || 0),\n    $node['Code - Prepare Sheet Row'].json['\\u0412\\u0430\\u043b\\u044e\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row'].json['\\u041a\\u0430\\u0442\\u0435\\u0433\\u043e\\u0440\\u0438\\u044f'],\n    $node['Code - Prepare Sheet Row'].json['\\u041e\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435 \\u043f\\u043e\\u043a\\u0443\\u043f\\u043e\\u043a']\n  ]]\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Code - Normalize OpenAI OCR Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1880,
+          -128
+        ],
+        "parameters": {
+          "jsCode": "const content = String($json.choices?.[0]?.message?.content || '').trim();\nif (!content) {\n  const message =\n    $json.error?.message ||\n    $json.message ||\n    $json.description ||\n    'OpenAI Vision did not return choices[0].message.content';\n  return [\n    {\n      json: {\n        ocr_ok: false,\n        error_message: String(message),\n        raw_response: JSON.stringify($json).slice(0, 6000)\n      }\n    }\n  ];\n}\nreturn [\n  {\n    json: {\n      ...$json,\n      ocr_ok: true,\n      raw_ocr_text: content\n    }\n  }\n];"
+        }
+      },
+      {
+        "name": "IF - OpenAI OCR OK",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          2120,
+          -128
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.ocr_ok === true }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Find User For Setup",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Photo": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Find User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Find User": {
+        "main": [
+          [
+            {
+              "node": "IF - User Exists",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - User Exists": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Airtable User",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Airtable - Create User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Create User": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Airtable User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Airtable User": {
+        "main": [
+          [
+            {
+              "node": "Switch - Sheet Ready Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Limit Check": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Limit Exhausted",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Download Receipt Photo",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Receipt Photo": {
+        "main": [
+          [
+            {
+              "node": "Code - Build OpenAI Vision Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Build OpenAI Vision Request": {
+        "main": [
+          [
+            {
+              "node": "HTTP - OpenAI Vision Receipt OCR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - OpenAI Vision Receipt OCR": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize OpenAI OCR Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Prepare Sheet Row": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Append Expense Row",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Update Limit and Log": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger - Daily Reset 00:00": {
+        "main": [
+          [
+            {
+              "node": "Airtable - List Free Users For Reset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - List Free Users For Reset": {
+        "main": [
+          [
+            {
+              "node": "Code - Build Reset Batches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Build Reset Batches": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Reset Daily Requests",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Find User For Setup": {
+        "main": [
+          [
+            {
+              "node": "Code - Receipt Setup Router",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Receipt Setup Router": {
+        "main": [
+          [
+            {
+              "node": "Switch - Receipt Setup Route",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Receipt Setup Route": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Ask Email For Sheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "IF - Setup User Exists",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Code - Normalize Photo",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Photo Only Help",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - Setup User Exists": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Update Setup Email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Airtable - Create Setup User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Update Setup Email": {
+        "main": [
+          [
+            {
+              "node": "Code - Setup Record After Upsert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Create Setup User": {
+        "main": [
+          [
+            {
+              "node": "Code - Setup Record After Upsert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Setup Record After Upsert": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Create User Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Create User Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Initialize Expense Header",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Initialize Expense Header": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Share Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Share Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Save User Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Save User Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Setup Complete",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Sheet Ready Check": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Ask Email For Sheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Switch - Limit Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Append Expense Row": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Update Limit and Log",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Sheet Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize OpenAI OCR Result": {
+        "main": [
+          [
+            {
+              "node": "IF - OpenAI OCR OK",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - OpenAI OCR OK": {
+        "main": [
+          [
+            {
+              "node": "Code - Prepare Sheet Row",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Mihail Rogal",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-07-24T11:36:59.743Z",
+        "workflowId": "pebCHtqibWu4m20U",
+        "versionId": "05e5e56e-903d-458a-9e7c-13ab4932a72f",
+        "event": "activated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-24T11:36:59.592Z",
+        "workflowId": "pebCHtqibWu4m20U",
+        "versionId": "05e5e56e-903d-458a-9e7c-13ab4932a72f",
+        "event": "deactivated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      }
+    ]
+  }
+}
