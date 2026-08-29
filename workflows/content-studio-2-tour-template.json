@@ -1,0 +1,1399 @@
+{
+  "updatedAt": "2026-08-21T08:25:02.781Z",
+  "createdAt": "2026-08-18T12:29:38.795Z",
+  "name": "Тестовое задание",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "01 Ручной запуск демо",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "name": "01 Расписание: ежедневный запуск (выключено)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1104,
+        528
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1Wf2X2TCjbn61GxWRhga6W4JgrMghyflY5UC47wXq6WA",
+          "cachedResultName": "Content Studio 2 Tour - Content Pipeline",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wf2X2TCjbn61GxWRhga6W4JgrMghyflY5UC47wXq6WA/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Контент-план",
+          "cachedResultName": "Контент-план"
+        },
+        "options": {}
+      },
+      "name": "02 Google Sheets: прочитать контент-план",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -704,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Старт по ТЗ. Берём строки из Google Sheets: тема, продукт, аудитория, площадка Meta, цель, тональность, материалы и safe/dry-run режим."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  status: 'queued',\n  topic: 'Онлайн-школа: как из одного вебинара получить 30 Reels и неделю контента',\n  product: 'n8n Content Studio для онлайн-школ и экспертов',\n  audience: 'Основатели онлайн-школ, продюсеры, методисты и маркетологи EdTech',\n  platform: 'Instagram Reels + Facebook post',\n  goal: 'Получить заявки на аудит контент-воронки',\n  tone: 'живой экспертный, уверенный, премиальный, без инфошума',\n  assets: 'фрагмент вебинара, скрин Telegram-бота, отзыв ученика, логотип школы',\n  render_video: false,\n  dry_run: true,\n  meta_publish_live: false,\n  telegram_chat_id: ''\n} }];"
+      },
+      "name": "03B Код: демо-строка если таблица пустая",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Резервная демо-строка. Если таблица пуста или недоступна, workflow всё равно показывает архитектуру на тестовом контент-плане."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst get = (row, names, fallback='') => {\n  for (const name of names) {\n    if (row[name] !== undefined && row[name] !== null && String(row[name]).trim() !== '') { const val = row[name]; if (String(val).toLowerCase().includes('не требуется') || String(val).toLowerCase().includes('опционально')) continue; return val; }\n  }\n  return fallback;\n};\nconst bool = (v, d=false) => {\n  if (v === undefined || v === null || String(v).trim() === '') return d;\n  const s = String(v).toLowerCase().trim();\n  return ['true','1','yes','да','дa','включить','вкл','реально'].includes(s);\n};\nconst isQueued = (row) => {\n  const status = String(get(row, ['Статус','status','Status'], '')).toLowerCase().trim();\n  return !status || ['queued','ready','new','todo','новая','новый','в очередь','к генерации','готово к запуску'].includes(status);\n};\nconst rows = items.map(i => i.json || {}).filter(isQueued);\nconst source = rows.length ? rows : [{\n  'Статус':'Новая',\n  'Тема публикации':'Онлайн-школа: как из одного вебинара получить 30 Reels и неделю контента',\n  'Продукт / проект':'n8n Content Studio для онлайн-школ и экспертов',\n  'Целевая аудитория':'Основатели онлайн-школ, продюсеры, методисты и маркетологи EdTech',\n  'Meta-площадка':'Instagram Reels + Facebook post',\n  'Цель публикации':'Получить заявки на аудит контент-воронки',\n  'Тональность':'живой экспертный, уверенный, премиальный, без инфошума',\n  'Исходные материалы':'фрагмент вебинара, скрин Telegram-бота, отзыв ученика, логотип школы',\n  'Создавать видео?':'Нет',\n  'Dry-run / демо без платных API':'Да',\n  'Публиковать в Meta реально?':'Нет'\n}];\nreturn source.slice(0, 3).map((row, index) => ({ json: {\n  source_row: get(row, ['row_number','Row','row','Номер строки'], index + 2),\n  status: get(row, ['Статус','status','Status'], 'queued'),\n  topic: get(row, ['Тема публикации','Тема','topic','Topic','idea'], 'Untitled topic'),\n  product: get(row, ['Продукт / проект','Продукт','Проект','product','Product'], ''),\n  audience: get(row, ['Целевая аудитория','Аудитория','audience','Audience'], ''),\n  platform: get(row, ['Meta-площадка','Площадка Meta','Площадка','platform','Platform'], 'Instagram Reels'),\n  goal: get(row, ['Цель публикации','Цель','goal','Goal'], ''),\n  tone: get(row, ['Тональность','Стиль','tone','Tone'], 'экспертно, коротко, практично'),\n  assets: get(row, ['Исходные материалы','Материалы','assets','Assets'], ''),\n  render_video: bool(get(row, ['Создавать видео?','render_video','RenderVideo'], ''), false),\n  dry_run: bool(get(row, ['Dry-run / демо без платных API','Демо без платных API','dry_run','DryRun'], ''), true),\n  meta_publish_live: bool(get(row, ['Публиковать в Meta реально?','Живая публикация Meta','meta_publish_live','MetaPublishLive'], ''), false),\n  avatar_id: get(row, ['ID аватара HeyGen (опционально)','ID аватара HeyGen','HeyGen avatar_id','avatar_id','AvatarId'], 'PASTE_HEYGEN_AVATAR_ID'),\n  voice_id: get(row, ['ID голоса HeyGen (опционально)','ID голоса HeyGen','HeyGen voice_id','voice_id','VoiceId'], 'PASTE_HEYGEN_VOICE_ID'),\n  telegram_chat_id: get(row, ['Telegram ID для уведомления (опционально)','Telegram chat ID','telegram_chat_id','TelegramChatId'], ''),\n  admin_chat_id: get(row, ['Admin chat ID','admin_chat_id','AdminChatId','Telegram ID для уведомления (опционально)'], '')\n} }));"
+      },
+      "name": "03 Код: подготовить строку контент-плана",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Код нужен оправданно: приводит русские колонки таблицы к единому внутреннему формату и понимает Да/Нет, статусы, dry-run."
+    },
+    {
+      "parameters": {
+        "jsCode": "const brief = { ...$json };\nconst prompt = [\n  'Создай production-ready пакет контента для Meta на основе строки контент-плана.',\n  'Тема: ' + brief.topic,\n  'Продукт/проект: ' + brief.product,\n  'Целевая аудитория: ' + brief.audience,\n  'Meta-площадка: ' + brief.platform,\n  'Цель: ' + brief.goal,\n  'Тональность: ' + brief.tone,\n  'Исходные материалы: ' + brief.assets,\n  'Нужно показать путь: идея -> контент -> avatar video -> voiceover -> subtitles -> финальный материал -> Meta publish.',\n  'Верни JSON строго по схеме.'\n].join('\\n');\nreturn [{ json: { ...brief, prompt } }];"
+      },
+      "name": "04 Код: собрать бриф для AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Код собирает prompt для AI из строки таблицы: тема, аудитория, цель, тональность, материалы, Meta-площадка."
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — оператор автоматизированной контент-студии для Meta-платформ.\nИз строки Google Sheets нужно собрать пакет для публикации: позиционирование, caption, сценарий Reels, план сцен, промпт для визуала, CTA и контроль качества.\nВерни только валидный JSON с точной плоской структурой:\n{\n  \"status\": \"ready\",\n  \"content_angle\": \"\",\n  \"caption_short\": \"\",\n  \"caption_long\": \"\",\n  \"reels_script\": \"\",\n  \"scene_plan\": \"\",\n  \"visual_prompt\": \"\",\n  \"hashtags\": \"\",\n  \"cta\": \"\",\n  \"meta_publish_copy\": \"\",\n  \"quality_notes\": \"\"\n}\nПравила:\n- Пиши конкретно, без generic AI slop.\n- Контент должен быть готов для Instagram Reels / Instagram / Facebook.\n- Если данных мало, сделай аккуратные предположения и укажи это в quality_notes.\n- Не обещай живую публикацию, если meta_publish_live=false.\n- JSON only."
+            },
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 1800,
+          "store": false,
+          "textFormat": {
+            "textOptions": {}
+          },
+          "temperature": 0.65
+        }
+      },
+      "name": "05 OpenAI: сгенерировать тексты и сценарий",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "LLM-этап: генерирует caption, короткий/длинный текст, Reels-сценарий, план сцен, визуальный prompt, CTA и hashtags."
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $node['04 Код: собрать бриф для AI'].json;\nreturn [{ json: {\n  ...base,\n  status: 'demo_ready',\n  content_angle: 'Показать, как из одной строки контент-плана получается готовый пакет для Meta-публикации.',\n  caption_short: 'Из одного вебинара — неделя контента. Контент-студия в n8n берёт строку из Google Sheets и собирает готовый Reels-пакет.',\n  caption_long: 'Команды онлайн-школ часто теряют время между идеей, сценарием, видео, субтитрами и публикацией. Этот workflow показывает конвейер: контент-план в Google Sheets, AI-генерация текста, mock avatar video, mock voiceover, mock subtitles, финальный материал и подготовленная публикация на Meta-платформы.',\n  reels_script: '0-3 сек: Онлайн-школа провела вебинар, а контента снова нет. 3-8 сек: Вносим одну идею в Google Sheets. 8-14 сек: n8n генерирует сценарий, caption и план сцен. 14-20 сек: mock-этапы собирают avatar video, озвучку и субтитры. 20-25 сек: материал уходит в Meta-публикацию.',\n  scene_plan: 'Google Sheets с контент-планом -> карточка AI-контента -> avatar video placeholder -> блок озвучки -> субтитры -> Meta publish payload.',\n  visual_prompt: 'Премиальная SaaS-контент-студия, n8n workflow, Google Sheets queue, Meta cards, avatar video preview, subtitles timeline.',\n  hashtags: '#n8n #AIautomation #contentstudio #MetaMarketing #EdTech',\n  cta: 'Напишите «студия», если хотите такой контент-конвейер.',\n  meta_publish_copy: 'Контент-студия в n8n: идея из Google Sheets превращается в готовый Meta-пакет с видео, озвучкой, субтитрами и публикацией.',\n  quality_notes: 'Demo fallback: используется безопасный тестовый пакет, чтобы показать архитектуру без обязательных платных API.'\n} }];"
+      },
+      "name": "05B Код: mock-контент если OpenAI недоступен",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Fallback: если OpenAI недоступен, workflow не падает, а показывает весь путь на качественном mock-контенте."
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $node['04 Код: собрать бриф для AI'].json;\nconst message = $json.output?.find?.((x) => x.type === 'message') || $json.output?.[0];\nconst raw = String(message?.content?.find?.((p) => p.type === 'output_text')?.text || message?.content?.[0]?.text || $json.text || '').trim();\nfunction parseJson(s) {\n  const clean = String(s || '').replace(/^\\s*```json\\s*/i,'').replace(/^\\s*```\\s*/i,'').replace(/\\s*```\\s*$/,'').trim();\n  try { return JSON.parse(clean); } catch(e) { const m = clean.match(/\\{[\\s\\S]*\\}/); if (m) return JSON.parse(m[0]); throw e; }\n}\nlet data;\ntry { data = parseJson(raw); } catch (e) {\n  data = { status: 'needs_review', content_angle: 'AI output could not be parsed', caption_short: '', caption_long: raw.slice(0, 2000), reels_script: '', scene_plan: '', visual_prompt: '', hashtags: '', cta: '', meta_publish_copy: '', quality_notes: 'Parser fallback: ' + e.message };\n}\nreturn [{ json: { ...base, raw_model_output: raw, ...data } }];"
+      },
+      "name": "06 Код: проверить JSON от AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Код парсит JSON от AI и защищает workflow от кривого ответа модели."
+    },
+    {
+      "parameters": {
+        "jsCode": "const script = String($json.reels_script || $json.caption_short || $json.topic).slice(0, 1400);\nreturn [{ json: { ...$json, should_render_heygen: Boolean($json.render_video && !$json.dry_run), heygen_request: { title: 'content-studio-' + Date.now(), video_inputs: [{ character: { type: 'avatar', avatar_id: $json.avatar_id, avatar_style: 'normal' }, voice: { type: 'text', input_text: script, voice_id: $json.voice_id }, background: { type: 'color', value: '#F6F1E7' } }], dimension: { width: 1080, height: 1920 } } } }];"
+      },
+      "name": "07 Код: подготовить запрос HeyGen avatar video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Код готовит production payload для HeyGen: вертикальное видео 1080x1920, avatar, voice, script. В dry-run дальше идёт mock."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_render_heygen }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "08 IF: real HeyGen или mock-видео",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1712,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Развилка: если Создавать видео = Да и Dry-run = Нет, идём в HeyGen. Иначе безопасный mock без списаний."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.heygen_request) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "name": "09 HeyGen API: создать видео с аватаром",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1712,
+        -528
+      ],
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Production-нода HeyGen. В демо не вызывается, но показывает реальную точку интеграции avatar video."
+    },
+    {
+      "parameters": {
+        "jsCode": "const video_id = $json.data?.video_id || $json.data?.id || $json.video_id || $json.id || '';\nif (!video_id) throw new Error('HeyGen did not return video_id. Check account/API body before retrying paid render.');\nreturn [{ json: { ...$node['07 Код: подготовить запрос HeyGen avatar video'].json, heygen_video_id: video_id } }];"
+      },
+      "name": "10 Код: проверить ID видео HeyGen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 90
+      },
+      "name": "11 Wait: дождаться рендера HeyGen",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2512,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.heygen.com/v3/videos/' + $json.heygen_video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "12 HeyGen API: получить статус видео",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2912,
+        -528
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $node['10 Код: проверить ID видео HeyGen'].json;\nconst url = $json.data?.video_url || $json.data?.captioned_video_url || $json.video_url || '';\nconst status = $json.data?.status || $json.status || (url ? 'completed' : 'processing');\nreturn [{ json: { ...base, heygen_status: status, heygen_video_url: url || 'pending: check HeyGen status later', asset_mode: 'heygen_live_requested' } }];"
+      },
+      "name": "13 Код: сохранить ссылку на видео",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...$json,\n  heygen_video_id: 'mock-video-not-rendered',\n  heygen_status: 'mock_avatar_video_ready',\n  heygen_video_url: 'mock://avatar-video/vertical-1080x1920.mp4',\n  asset_mode: 'dry_run_mock_video',\n  video_render_notes: 'Видео с аватаром не рендерилось платно. Это mock-результат для демонстрации архитектуры.'\n} }];"
+      },
+      "name": "09B Код: mock-видео без платного рендера",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Mock avatar video: показывает место готового видео без платного рендера."
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date().toISOString();\nconst metaPayload = {\n  target_platforms: String($json.platform || 'Instagram Reels').split('+').map(s => s.trim()),\n  mode: $json.meta_publish_live ? 'live_publish_requested' : 'mock_publish',\n  caption: $json.meta_publish_copy || $json.caption_long || $json.caption_short,\n  hashtags: $json.hashtags,\n  creative: {\n    video_url: $json.final_video_asset_url,\n    voiceover_url: $json.voiceover_audio_url,\n    subtitles_srt: $json.subtitles_srt,\n    scene_plan: $json.scene_plan,\n    visual_prompt: $json.visual_prompt\n  }\n};\nconst telegram_text = '<b>Content Studio: материал готов</b>\\n\\n' +\n  '<b>Тема:</b> ' + ($json.topic || '-') + '\\n' +\n  '<b>Meta:</b> ' + ($json.platform || '-') + '\\n' +\n  '<b>Видео:</b> ' + ($json.heygen_status || '-') + '\\n' +\n  '<b>Озвучка:</b> ' + ($json.voiceover_status || '-') + '\\n' +\n  '<b>Субтитры:</b> ' + ($json.subtitles_status || '-') + '\\n' +\n  '<b>Публикация:</b> ' + ($json.meta_publish_live ? 'live requested' : 'mock');\nreturn [{ json: {\n  ...$json,\n  meta_publish_payload: metaPayload,\n  telegram_text,\n  'Дата создания': now,\n  'Строка источника': $json.source_row,\n  'Тема': $json.topic,\n  'Meta-площадка': $json.platform,\n  'Продукт / проект': $json.product,\n  'Целевая аудитория': $json.audience,\n  'Цель': $json.goal,\n  'Идея / угол подачи': $json.content_angle,\n  'Короткий текст': $json.caption_short,\n  'Длинный текст': $json.caption_long,\n  'Сценарий Reels': $json.reels_script,\n  'План сцен': $json.scene_plan,\n  'Промпт для визуала': $json.visual_prompt,\n  'Хештеги': $json.hashtags,\n  'CTA': $json.cta,\n  'Заметки качества': $json.quality_notes,\n  'ID видео HeyGen': $json.heygen_video_id,\n  'Статус видео': $json.heygen_status,\n  'Ссылка на видео / mock': $json.final_video_asset_url,\n  'Статус озвучки': $json.voiceover_status,\n  'Ссылка на озвучку / mock': $json.voiceover_audio_url,\n  'Субтитры SRT': $json.subtitles_srt,\n  'Статус финального материала': $json.final_material_status,\n  'Режим Meta': $json.meta_publish_live ? 'Реальная публикация включена' : 'Демо: mock-публикация',\n  'Payload для Meta': JSON.stringify(metaPayload),\n  telegram_chat_id: $json.telegram_chat_id,\n  admin_chat_id: $json.admin_chat_id,\n  'Telegram chat ID': $json.telegram_chat_id,\n  'Сообщение в Telegram': telegram_text\n} }];"
+      },
+      "name": "23 Код: подготовить Meta payload и лог",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7104,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Готовит payload для Instagram/Facebook и строку результата для таблицы: тексты, видео, озвучка, SRT, финальный материал, статус Meta."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1Wf2X2TCjbn61GxWRhga6W4JgrMghyflY5UC47wXq6WA",
+          "cachedResultName": "Content Studio 2 Tour - Content Pipeline",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wf2X2TCjbn61GxWRhga6W4JgrMghyflY5UC47wXq6WA/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Результаты",
+          "cachedResultName": "Результаты"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "name": "28 Google Sheets: записать результат",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        8704,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Фиксируем результат в Google Sheets: тексты, сценарий, видео/mock, озвучка/mock, SRT-субтитры, Meta payload и статус публикации."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($json.telegram_chat_id || $json.admin_chat_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "29 IF: отправлять Telegram-уведомление?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        9104,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id || $json.admin_chat_id || \"\" }}",
+        "text": "={{ $json.telegram_text }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "30 Telegram: отправить итог",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        9104,
+        528
+      ],
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "notes": "Опциональное уведомление администратору/клиенту в Telegram: что материал готов, какой режим рендера и какой статус Meta-публикации."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, message: 'Контент прошёл весь путь: Google Sheets -> AI -> HeyGen/mock -> озвучка/mock -> субтитры/mock -> финальная сборка -> Instagram/Facebook publish/mock -> Google Sheets log', topic: $json.topic, meta_status: $json.meta_publication_status } }];"
+      },
+      "name": "31 Код: финальный статус",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9504,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Финальная техническая точка execution: показывает, что весь путь завершён."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...$json,\n  should_generate_voiceover: Boolean(!$json.dry_run && $json.render_video),\n  voiceover_request: {\n    provider: 'OpenAI TTS / ElevenLabs / HeyGen Voice',\n    language: 'ru',\n    text: String($json.reels_script || $json.caption_short || $json.topic || '').slice(0, 2500),\n    voice: $json.voice_id || 'production_voice_from_credentials'\n  }\n}}];"
+      },
+      "name": "14 Код: подготовить запрос озвучки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4304,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Этап озвучки по ТЗ. Код готовит запрос для TTS/voice API. В dry-run API не вызывается."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_generate_voiceover }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "15 IF: real озвучка или mock",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4704,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Развилка озвучки: production TTS или безопасная mock-озвучка."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"gpt-4o-mini-tts\", voice: $json.voiceover_request.voice || \"alloy\", input: $json.voiceover_request.text }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "16 TTS API: создать озвучку",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4704,
+        -528
+      ],
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Production placeholder для OpenAI TTS/ElevenLabs. В dry-run не вызывается."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...$node['14 Код: подготовить запрос озвучки'].json,\n  voiceover_status: 'voiceover_api_requested',\n  voiceover_audio_url: $json.audio_url || $json.url || 'production://voiceover.mp3',\n  voiceover_provider: 'production_tts_api'\n}}];"
+      },
+      "name": "17 Код: сохранить ссылку на озвучку",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5104,
+        -528
+      ],
+      "notesInFlow": true,
+      "notes": "Нормализует ответ TTS API: статус и ссылку на аудио."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...$json,\n  voiceover_status: 'mock_voiceover_ready',\n  voiceover_audio_url: 'mock://voiceover/russian-narration.mp3',\n  voiceover_provider: 'mock_safe_mode',\n  voiceover_notes: 'Озвучка не создавалась платно. Это mock для демонстрации архитектуры.'\n}}];"
+      },
+      "name": "16B Код: mock-озвучка",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4704,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Mock-озвучка для тестового задания без платных API."
+    },
+    {
+      "parameters": {
+        "jsCode": "const sessionId = 'content-studio-' + String($json.source_row || 'demo') + '-' + Date.now();\nreturn [{\n  json: {\n    ...$json,\n    renderer_session_id: sessionId,\n    should_generate_subtitles: Boolean(!$json.dry_run && $json.render_video),\n    subtitles_request: {\n      provider: 'Local Python renderer + FFmpeg ASS/SRT',\n      endpoint: 'http://reels-renderer:8099/render-subtitles',\n      session_id: sessionId,\n      language: 'ru',\n      format: 'ass+srt',\n      audio_url: $json.voiceover_audio_url,\n      script: $json.reels_script || $json.caption_short || $json.topic,\n      style: {\n        preset: 'reels_readable_lower_third',\n        font: 'Montserrat Black',\n        max_words_on_screen: 3,\n        safe_area: 'no face/CTA overlap',\n        accent_words: ['важно', 'результат', 'бот', 'контент', 'лиды']\n      }\n    }\n  }\n}];"
+      },
+      "name": "18 Код: подготовить запрос субтитров",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5504,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Этап субтитров по ТЗ.\nГотовит данные для локального renderer-сервиса рядом с n8n: Python + FFmpeg + ASS/SRT.\nВ dry-run эта ветка не вызывается, поэтому платных и внешних запросов нет."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_generate_subtitles }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "19 IF: real субтитры или mock",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5904,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Развилка: production subtitles API или mock SRT."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://reels-renderer:8099/render-subtitles",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.subtitles_request) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "20 Python Renderer: создать SRT/ASS субтитры",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5904,
+        -528
+      ],
+      "notesInFlow": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "Production-схема субтитров: n8n вызывает локальный Python renderer на сервере.\nRenderer делает SRT/ASS, расставляет крупные Reels-субтитры и возвращает пути/URL.\nЭто не внешний фейковый API. В dry-run workflow идет через mock SRT."
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $node['18 Код: подготовить запрос субтитров'].json;\nconst out = $json || {};\nreturn [{\n  json: {\n    ...source,\n    subtitles_status: out.status || 'local_python_subtitles_ready',\n    subtitles_srt: out.srt || out.subtitles_srt || out.srt_url || 'renderer://subtitles.srt',\n    subtitles_ass: out.ass || out.subtitles_ass || out.ass_url || 'renderer://subtitles.ass',\n    subtitles_provider: 'local_python_ffmpeg_renderer',\n    renderer_session_id: out.session_id || source.renderer_session_id\n  }\n}];"
+      },
+      "name": "21 Код: сохранить реальные субтитры",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6304,
+        -528
+      ],
+      "notesInFlow": true,
+      "notes": "Нормализует ответ локального Python renderer: SRT, ASS и preview/final paths."
+    },
+    {
+      "parameters": {
+        "jsCode": "const script = String($json.reels_script || $json.caption_short || $json.topic || '').trim();\nconst chunks = script.split(/(?<=[.!?])\\s+/).filter(Boolean).slice(0, 6);\nconst srt = chunks.length ? chunks.map((line, i) => {\n  const start = String(i * 4).padStart(2, '0');\n  const end = String((i + 1) * 4).padStart(2, '0');\n  return (i + 1) + '\\n00:00:' + start + ',000 --> 00:00:' + end + ',000\\n' + line;\n}).join('\\n\\n') : '1\\n00:00:00,000 --> 00:00:04,000\\nСубтитры будут созданы из сценария Reels.';\nreturn [{ json: { ...$json, subtitles_status: 'mock_subtitles_ready', subtitles_srt: srt, subtitles_provider: 'mock_srt_from_script' } }];"
+      },
+      "name": "20B Код: mock SRT-субтитры",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5904,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Dry-run ветка: создает mock SRT из сценария без обращения к renderer, чтобы показать архитектуру безопасно."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    final_material_status: $json.dry_run ? 'mock_final_video_ready' : 'local_python_render_ready',\n    final_video_asset_url: String($json.heygen_video_url || '').startsWith('http')\n      ? $json.heygen_video_url\n      : 'mock://final-meta-reels/avatar-video-voiceover-subtitles.mp4',\n    final_material_notes: 'Production render: локальный Python + FFmpeg собирает вертикальный 9:16 ролик, накладывает озвучку и ASS/SRT субтитры.',\n    render_stack: 'HeyGen avatar video + TTS voiceover + Local Python/FFmpeg subtitles/render + Meta Graph API'\n  }\n}];"
+      },
+      "name": "22 Код: финальная сборка видео 9:16",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6704,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Финальная сборка по ТЗ.\nВ production здесь вызывается тот же локальный Python/FFmpeg renderer: avatar video + voiceover + ASS-субтитры + 9:16 Meta preset.\nВ dry-run возвращается mock final asset без генераций."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean(!$json.dry_run && $json.meta_publish_live) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "24 IF: real Meta API или mock-публикация",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7504,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Финальная развилка по ТЗ. В dry-run — mock публикация; в production — Meta Graph API."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v23.0/' + ($json.instagram_business_account_id || 'IG_BUSINESS_ACCOUNT_ID') + '/media' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ media_type: 'REELS', video_url: $json.final_video_asset_url, caption: $json.meta_publish_payload?.caption || $json.caption_short, access_token: 'META_ACCESS_TOKEN_FROM_CREDENTIAL' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "25 Instagram API: публикация Reels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7504,
+        -528
+      ],
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Production-нода публикации Instagram Reels через Meta Graph API. В dry-run не вызывается."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v23.0/' + ($json.facebook_page_id || 'FACEBOOK_PAGE_ID') + '/videos' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file_url: $json.final_video_asset_url, description: $json.meta_publish_payload?.caption || $json.caption_short, access_token: 'META_ACCESS_TOKEN_FROM_CREDENTIAL' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "26 Facebook API: публикация видео",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7904,
+        -528
+      ],
+      "notesInFlow": true,
+      "onError": "continueErrorOutput",
+      "notes": "Production-нода публикации Facebook video через Meta Graph API. В dry-run не вызывается."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...$json,\n  meta_publication_status: 'real_meta_api_requested',\n  meta_publication_id: $json.id || $json.post_id || 'meta_api_response_id',\n  meta_publication_url: $json.permalink_url || 'production://meta-post-url',\n  'Статус Meta-публикации': 'Реальная Meta Graph API публикация запрошена',\n  'ID публикации Meta / mock': $json.id || $json.post_id || 'meta_api_response_id',\n  'Ссылка публикации Meta / mock': $json.permalink_url || 'production://meta-post-url'\n}}];"
+      },
+      "name": "27 Код: результат реальной Meta-публикации",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8304,
+        -528
+      ],
+      "notesInFlow": true,
+      "notes": "Нормализует ответ реальной Meta Graph API публикации."
+    },
+    {
+      "parameters": {
+        "jsCode": "const postId = 'mock_meta_post_' + Date.now();\nreturn [{ json: {\n  ...$json,\n  meta_publication_status: 'mock_published_to_meta_platforms',\n  meta_publication_id: postId,\n  meta_publication_url: 'mock://meta/instagram-facebook/' + postId,\n  'Статус Meta-публикации': 'Mock опубликовано на Instagram/Facebook',\n  'ID публикации Meta / mock': postId,\n  'Ссылка публикации Meta / mock': 'mock://meta/instagram-facebook/' + postId\n}}];"
+      },
+      "name": "25B Код: mock публикация Instagram/Facebook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7504,
+        528
+      ],
+      "notesInFlow": true,
+      "notes": "Финальная mock-публикация в Instagram/Facebook для тестового запуска без реального Meta API."
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "00 Telegram: принять материалы и уточнения",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1104,
+        912
+      ],
+      "notesInFlow": true,
+      "notes": "Дополнительный вход: Telegram-бот может принять голос, фото, видео или текстовые уточнения от человека, если материалов в таблице не хватает."
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message?.chat?.id || \"\" }}",
+        "text": "Привет! Я контент-студия на n8n.\n\nЯ могу собрать материал полностью: идея → текст → сценарий → видео с аватаром → озвучка → субтитры → Instagram/Facebook.\n\nЕсли для production-версии не хватает материалов, пришлите сюда голос, фото/видео, ссылку на продукт и площадку публикации.\n\nДля тестового задания можно запустить dry-run: он покажет всю архитектуру без платных генераций.",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "00B Telegram: объяснить что прислать",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -704,
+        912
+      ],
+      "notesInFlow": true,
+      "notes": "Общение с человеком: workflow сам объясняет, какие материалы нужны, вместо того чтобы просить технические ID в таблице."
+    },
+    {
+      "parameters": {
+        "content": "## Content Studio — понятный прототип\n\nЭто workflow автоматизированной контент-студии по ТЗ.\n\nПуть одной строки: Google Sheets → AI-контент → видео с аватаром → озвучка → субтитры → финальная сборка 9:16 → Instagram/Facebook публикация → лог в Google Sheets с возможностью управления в телеграм боте\n\nDry-run показывает весь путь без платных API.",
+        "height": 300,
+        "width": 780,
+        "color": 4
+      },
+      "name": "README - Что это за workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        -976
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Как запускать демо\n\nВ таблице «Контент-план»: Создавать видео = Нет, Dry-run = Да, Публиковать в Meta реально = Нет.\n\nНажмите Manual Trigger. Во вкладке «Результаты» появятся: тексты, Reels-сценарий, mock-видео, mock-озвучка, SRT-субтитры, payload и mock-публикация Instagram/Facebook.",
+        "height": 300,
+        "width": 780,
+        "color": 5
+      },
+      "name": "README - Как показать работодателю",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        -976
+      ]
+    }
+  ],
+  "connections": {
+    "01 Ручной запуск демо": {
+      "main": [
+        [
+          {
+            "node": "02 Google Sheets: прочитать контент-план",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Расписание: ежедневный запуск (выключено)": {
+      "main": [
+        [
+          {
+            "node": "02 Google Sheets: прочитать контент-план",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Google Sheets: прочитать контент-план": {
+      "main": [
+        [
+          {
+            "node": "03 Код: подготовить строку контент-плана",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "03B Код: демо-строка если таблица пустая",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03B Код: демо-строка если таблица пустая": {
+      "main": [
+        [
+          {
+            "node": "04 Код: собрать бриф для AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Код: подготовить строку контент-плана": {
+      "main": [
+        [
+          {
+            "node": "04 Код: собрать бриф для AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Код: собрать бриф для AI": {
+      "main": [
+        [
+          {
+            "node": "05 OpenAI: сгенерировать тексты и сценарий",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 OpenAI: сгенерировать тексты и сценарий": {
+      "main": [
+        [
+          {
+            "node": "06 Код: проверить JSON от AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "05B Код: mock-контент если OpenAI недоступен",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 Код: проверить JSON от AI": {
+      "main": [
+        [
+          {
+            "node": "07 Код: подготовить запрос HeyGen avatar video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05B Код: mock-контент если OpenAI недоступен": {
+      "main": [
+        [
+          {
+            "node": "07 Код: подготовить запрос HeyGen avatar video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 Код: подготовить запрос HeyGen avatar video": {
+      "main": [
+        [
+          {
+            "node": "08 IF: real HeyGen или mock-видео",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 IF: real HeyGen или mock-видео": {
+      "main": [
+        [
+          {
+            "node": "09 HeyGen API: создать видео с аватаром",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "09B Код: mock-видео без платного рендера",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 HeyGen API: создать видео с аватаром": {
+      "main": [
+        [
+          {
+            "node": "10 Код: проверить ID видео HeyGen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "09B Код: mock-видео без платного рендера",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10 Код: проверить ID видео HeyGen": {
+      "main": [
+        [
+          {
+            "node": "11 Wait: дождаться рендера HeyGen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11 Wait: дождаться рендера HeyGen": {
+      "main": [
+        [
+          {
+            "node": "12 HeyGen API: получить статус видео",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12 HeyGen API: получить статус видео": {
+      "main": [
+        [
+          {
+            "node": "13 Код: сохранить ссылку на видео",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "09B Код: mock-видео без платного рендера",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13 Код: сохранить ссылку на видео": {
+      "main": [
+        [
+          {
+            "node": "14 Код: подготовить запрос озвучки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09B Код: mock-видео без платного рендера": {
+      "main": [
+        [
+          {
+            "node": "14 Код: подготовить запрос озвучки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14 Код: подготовить запрос озвучки": {
+      "main": [
+        [
+          {
+            "node": "15 IF: real озвучка или mock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15 IF: real озвучка или mock": {
+      "main": [
+        [
+          {
+            "node": "16 TTS API: создать озвучку",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "16B Код: mock-озвучка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16 TTS API: создать озвучку": {
+      "main": [
+        [
+          {
+            "node": "17 Код: сохранить ссылку на озвучку",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "16B Код: mock-озвучка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17 Код: сохранить ссылку на озвучку": {
+      "main": [
+        [
+          {
+            "node": "18 Код: подготовить запрос субтитров",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16B Код: mock-озвучка": {
+      "main": [
+        [
+          {
+            "node": "18 Код: подготовить запрос субтитров",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "18 Код: подготовить запрос субтитров": {
+      "main": [
+        [
+          {
+            "node": "19 IF: real субтитры или mock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19 IF: real субтитры или mock": {
+      "main": [
+        [
+          {
+            "node": "20 Python Renderer: создать SRT/ASS субтитры",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "20B Код: mock SRT-субтитры",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "21 Код: сохранить реальные субтитры": {
+      "main": [
+        [
+          {
+            "node": "22 Код: финальная сборка видео 9:16",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20B Код: mock SRT-субтитры": {
+      "main": [
+        [
+          {
+            "node": "22 Код: финальная сборка видео 9:16",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "22 Код: финальная сборка видео 9:16": {
+      "main": [
+        [
+          {
+            "node": "23 Код: подготовить Meta payload и лог",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "23 Код: подготовить Meta payload и лог": {
+      "main": [
+        [
+          {
+            "node": "24 IF: real Meta API или mock-публикация",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "24 IF: real Meta API или mock-публикация": {
+      "main": [
+        [
+          {
+            "node": "25 Instagram API: публикация Reels",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "25B Код: mock публикация Instagram/Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "25 Instagram API: публикация Reels": {
+      "main": [
+        [
+          {
+            "node": "26 Facebook API: публикация видео",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "25B Код: mock публикация Instagram/Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "26 Facebook API: публикация видео": {
+      "main": [
+        [
+          {
+            "node": "27 Код: результат реальной Meta-публикации",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "25B Код: mock публикация Instagram/Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "27 Код: результат реальной Meta-публикации": {
+      "main": [
+        [
+          {
+            "node": "28 Google Sheets: записать результат",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "25B Код: mock публикация Instagram/Facebook": {
+      "main": [
+        [
+          {
+            "node": "28 Google Sheets: записать результат",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "28 Google Sheets: записать результат": {
+      "main": [
+        [
+          {
+            "node": "29 IF: отправлять Telegram-уведомление?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "31 Код: финальный статус",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "29 IF: отправлять Telegram-уведомление?": {
+      "main": [
+        [
+          {
+            "node": "30 Telegram: отправить итог",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "31 Код: финальный статус",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "30 Telegram: отправить итог": {
+      "main": [
+        [
+          {
+            "node": "31 Код: финальный статус",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "00 Telegram: принять материалы и уточнения": {
+      "main": [
+        [
+          {
+            "node": "00B Telegram: объяснить что прислать",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20 Python Renderer: создать SRT/ASS субтитры": {
+      "main": [
+        [
+          {
+            "node": "21 Код: сохранить реальные субтитры",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "20B Код: mock SRT-субтитры",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Europe/Moscow",
+    "binaryMode": "separate"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionId": "a9a377d7-9514-473f-b823-ce16f1ab9957",
+  "activeVersionId": null,
+  "versionCounter": 51,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "activeVersion": null
+}
