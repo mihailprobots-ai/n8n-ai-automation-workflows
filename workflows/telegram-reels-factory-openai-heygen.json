@@ -1,0 +1,2724 @@
+{
+  "updatedAt": "2026-07-23T18:48:31.462Z",
+  "createdAt": "2026-07-14T15:38:57.939Z",
+  "name": "Telegram Reels Factory - OpenAI + HeyGen",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Telegram Reels Factory - final screen top + HeyGen bottom\\n\\nFinal flow:\\n1. User sends screen recording.\\n2. User sends avatar photo.\\n3. User sends voice/audio.\\n4. User sends wishes.\\n5. Workflow waits for exact confirmation: РЕНДЕР.\\n6. Only after РЕНДЕР paid HeyGen generation starts.\\n7. Renderer container composes 1080x1920 mp4: screen recording top, HeyGen speaker bottom.\\n\\nRenderer:\\n- Internal URL from n8n container: http://reels-renderer:8099\\n- Docker container is separate from n8n and does not require Execute Command nodes.\\n\\nCredit safety:\\n- HeyGen Create Video is called once per session using Idempotency-Key.\\n- Status polling does not start a second render.\\n- Montage failures do not call HeyGen again; user receives an error with the HeyGen CDN source.\\n- HeyGen speaker is generated as 16:9 so renderer can crop it cleanly into the lower half.\\n\\nPatch:\\n- Top screen layer is now one clear cropped screen recording, no blurred duplicate.\\n- HeyGen voice now uses the original user Telegram voice converted to mp3 by reels-renderer.\\n- OpenAI TTS node is disabled and no longer connected to HeyGen voice upload.\n\nPatch 2026-07-23:\n- Fixed voice binary flow: original Telegram voice is converted before Whisper removes binary data.\n- HeyGen receives cleaned mp3 from the real user voice, not OpenAI TTS.\n- Whisper uses a separate Telegram redownload after voice asset upload, so paid HeyGen Create waits until all prep succeeds.",
+        "height": 360,
+        "width": 660
+      },
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1104,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nstore.sessions ||= {};\n\nconst msg = $json.message || {};\nconst chatId = String(msg.chat?.id || '');\nconst text = String(msg.text || msg.caption || '').trim();\nconst session = store.sessions[chatId] || {};\n\nfunction largestPhotoFileId(message) {\n  const photos = message.photo || [];\n  if (!photos.length) return '';\n  return photos[photos.length - 1].file_id;\n}\n\nfunction screenVideoFileId(message) {\n  if (message.video?.file_id) return message.video.file_id;\n  if (message.document?.file_id && String(message.document.mime_type || '').startsWith('video/')) return message.document.file_id;\n  return '';\n}\n\nfunction audioFileId(message) {\n  if (message.voice?.file_id) return message.voice.file_id;\n  if (message.audio?.file_id) return message.audio.file_id;\n  if (message.document?.file_id && String(message.document.mime_type || '').startsWith('audio/')) return message.document.file_id;\n  return '';\n}\n\nfunction newSession() {\n  const sid = chatId + '_' + Date.now();\n  store.sessions[chatId] = {\n    session_id: sid,\n    stage: 'need_screen',\n    created_at: new Date().toISOString()\n  };\n  return store.sessions[chatId];\n}\n\nfunction renderSummary(current) {\n  return [\n    '✅ Материалы приняты, но платный HeyGen еще НЕ запущен.',\n    '',\n    'Проверка:',\n    '1) Запись экрана: есть',\n    '2) Фото аватара: есть',\n    '3) Голос/аудио: есть',\n    '4) Пожелания: ' + (current.wishes || 'без пожеланий'),\n    '',\n    'Если все верно, отправь ровно слово:',\n    'РЕНДЕР',\n    '',\n    'Если нужно заменить файлы, отправь /new и начни заново. До слова РЕНДЕР кредиты HeyGen не тратятся.'\n  ].join('\\n');\n}\n\nlet current = session.session_id ? session : newSession();\nlet route = 'ask';\nlet reply = '';\n\nif (/^\\/(start|new)/i.test(text)) {\n  current = newSession();\n  reply = [\n    '🎬 Запускаем новый Reels в формате “экран сверху + говорящий человек снизу”.',\n    '',\n    'Шаг 1: пришли запись экрана Telegram/бота.',\n    'Лучше: вертикальное видео 9:16, 15-40 секунд, без лишних пауз, чтобы было видно отправку голосового и результат бота.'\n  ].join('\\n');\n} else if (current.stage === 'need_screen') {\n  const fileId = screenVideoFileId(msg);\n  if (!fileId) {\n    reply = [\n      'Пришли именно видео-запись экрана Telegram/бота.',\n      '',\n      'Формат: обычное видео или video-файл. Фото/текст на этом шаге не подойдут.'\n    ].join('\\n');\n  } else {\n    current.screen_file_id = fileId;\n    const screenDuration = msg.video?.duration || 0;\n    const screenSize = msg.video?.file_size || msg.document?.file_size || 0;\n    if (screenDuration && screenDuration > 75) {\n      reply = 'Запись экрана слишком длинная. Пришли видео до 60 секунд, чтобы монтаж не получился тяжелым.';\n    } else if (screenSize && screenSize > 20 * 1024 * 1024) {\n      reply = 'Запись экрана слишком большая для Telegram Bot API. Сожми видео или пришли фрагмент до 20 МБ.';\n    } else {\n    current.screen_duration = screenDuration;\n    current.screen_width = msg.video?.width || 0;\n    current.screen_height = msg.video?.height || 0;\n    current.screen_size = screenSize;\n    current.stage = 'need_avatar';\n    reply = [\n      '✅ Запись экрана принята.',\n      '',\n      'Шаг 2: пришли фото или селфи для говорящего HeyGen-человека.',\n      'Лучше: лицо крупно, хорошее освещение, один человек, рот и лицо хорошо видны.'\n    ].join('\\n');\n    }\n  }\n} else if (current.stage === 'need_avatar') {\n  const fileId = largestPhotoFileId(msg);\n  if (!fileId) {\n    reply = 'Теперь пришли фото/селфи для говорящего человека. После этого я попрошу голос.';\n  } else {\n    current.avatar_file_id = fileId;\n    current.stage = 'need_voice';\n    reply = [\n      '✅ Фото принято.',\n      '',\n      'Шаг 3: пришли голосовое или аудиофайл с речью для ролика.',\n      'Лучше 20-35 секунд, четко, без длинных пауз. Это будет речь для губ и движения HeyGen.'\n    ].join('\\n');\n  }\n} else if (current.stage === 'need_voice') {\n  const fileId = audioFileId(msg);\n  if (!fileId) {\n    reply = 'Теперь нужен голос или аудиофайл с речью для ролика.';\n  } else {\n    const voiceDuration = msg.voice?.duration || msg.audio?.duration || 0;\n    const voiceSize = msg.voice?.file_size || msg.audio?.file_size || msg.document?.file_size || 0;\n    if (voiceDuration && voiceDuration > 75) {\n      reply = 'Голос слишком длинный. Пришли речь до 60 секунд, чтобы не тратить лишние HeyGen-кредиты.';\n    } else if (voiceSize && voiceSize > 20 * 1024 * 1024) {\n      reply = 'Аудиофайл слишком большой. Пришли голос/аудио до 20 МБ.';\n    } else {\n    current.voice_file_id = fileId;\n    current.voice_duration = voiceDuration;\n    current.voice_size = voiceSize;\n    current.stage = 'need_wishes';\n    reply = [\n      '✅ Аудио принято.',\n      '',\n      'Шаг 4: напиши пожелания к ролику: какой бот/сервис рекламируем, стиль, акценты, CTA.',\n      'Если пожеланий нет, отправь: без пожеланий.'\n    ].join('\\n');\n    }\n  }\n} else if (current.stage === 'need_wishes') {\n  if (!text) {\n    reply = 'Напиши текстом пожелания к ролику. Если пожеланий нет, отправь: без пожеланий.';\n  } else {\n    current.wishes = text;\n    current.stage = 'need_render_confirm';\n    reply = renderSummary(current);\n  }\n} else if (current.stage === 'need_render_confirm') {\n  if (/^(рендер|render)$/i.test(text)) {\n    current.stage = 'processing';\n    route = 'process';\n    reply = 'Запускаю платную сборку Reels.';\n  } else {\n    reply = renderSummary(current);\n  }\n} else if (current.stage === 'processing') {\n  reply = 'Ролик уже собирается. Новый платный рендер не запускаю. Если хочешь начать заново, отправь /new.';\n} else {\n  current = newSession();\n  reply = 'Начал новый проект. Пришли запись экрана Telegram/бота.';\n}\n\nstore.sessions[chatId] = current;\n\nreturn [{\n  json: {\n    route,\n    reply,\n    chat_id: chatId,\n    session_id: current.session_id,\n    screen_file_id: current.screen_file_id || '',\n    screen_duration: current.screen_duration || 0,\n    screen_width: current.screen_width || 0,\n    screen_height: current.screen_height || 0,\n    screen_size: current.screen_size || 0,\n    avatar_file_id: current.avatar_file_id || '',\n    voice_file_id: current.voice_file_id || '',\n    wishes: current.wishes || '',\n    voice_duration: current.voice_duration || 0,\n    voice_size: current.voice_size || 0\n  }\n}];"
+      },
+      "name": "Code - Telegram Session Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "process",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "process"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Ask Or Process",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -624,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Step Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -384,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "🎬 Рендер подтвержден.\\n\\nСейчас загружаю запись экрана, фото и голос, затем запускаю HeyGen. Платный Create Video будет вызван один раз.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Processing Started",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -384,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $node['Code - Telegram Session Router'].json.avatar_file_id }}",
+        "additionalFields": {
+          "mimeType": "image/jpeg"
+        }
+      },
+      "name": "Telegram - Download Avatar Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        368,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v3/assets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "HTTP - HeyGen Upload Avatar Asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v3/assets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "HTTP - HeyGen Upload Voice Asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2272,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $node['Code - Telegram Session Router'].json.voice_file_id }}",
+        "additionalFields": {
+          "mimeType": "audio/ogg"
+        }
+      },
+      "name": "Telegram - Download Voice For Whisper",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1552,
+        -128
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "ru",
+          "temperature": 0
+        }
+      },
+      "name": "OpenAI - Whisper Transcript",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        3232,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — режиссер коротких вертикальных роликов и промпт-инженер для HeyGen.\\n\\nНа вход приходит транскрипт речи и пожелания пользователя.\\nВерни только валидный JSON без Markdown.\\n\\nСтруктура:\\n{\\n  \"title\": \"короткое название ролика до 60 символов\",\\n  \"motion_prompt\": \"короткий английский prompt для естественной динамики говорящего аватара\"\\n}\\n\\nПравила:\\n- title на русском, без кавычек внутри.\\n- motion_prompt на английском.\\n- Не добавляй факты, которых нет во входе.\\n- Стиль: живой Reels/Shorts, уверенный экспертный тон, без перегруза."
+            },
+            {
+              "content": "={{ \"Транскрипт:\\n\" + $node[\"Code - Validate Reels Transcript\"].json.text + \"\\n\\nПожелания пользователя:\\n\" + $node[\"Code - Telegram Session Router\"].json.wishes }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 500,
+          "store": false,
+          "textFormat": {
+            "textOptions": {}
+          },
+          "temperature": 0.4
+        }
+      },
+      "name": "OpenAI - GPT-4o-mini Reels Prompt",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        3712,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(\n  message?.content?.find?.((part) => part.type === 'output_text')?.text ||\n  message?.content?.[0]?.text ||\n  $json.text ||\n  ''\n).trim();\n\nfunction parseJson(value) {\n  const cleaned = value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n  try {\n    return JSON.parse(cleaned);\n  } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    return {};\n  }\n}\n\nconst data = parseJson(raw);\nconst transcript = String($node['OpenAI - Whisper Transcript'].json.text || '').trim();\nconst wishes = String($node['Code - Telegram Session Router'].json.wishes || '').trim();\nconst fallbackTitle = transcript ? transcript.split(/[.!?\\n]/)[0].slice(0, 60) : 'Reels Factory';\nconst title = String(data.title || fallbackTitle || 'Reels Factory').replace(/[\"<>]/g, '').slice(0, 60);\nconst motion = String(\n  data.motion_prompt ||\n  ('Natural talking-head vertical Reels video. Confident friendly delivery, subtle head movement, expressive but not exaggerated. User style notes: ' + wishes)\n).slice(0, 700);\n\nreturn [{\n  json: {\n    raw_model_output: raw,\n    title,\n    motion_prompt: motion\n  }\n}];"
+      },
+      "name": "Code - Normalize Reels Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'reels-' + $node['Code - Telegram Session Router'].json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  type: 'image',\n  image: {\n    type: 'asset_id',\n    asset_id: $node['Code - Normalize HeyGen Assets'].json.avatar_asset_id\n  },\n  title: $node['Code - Normalize HeyGen Assets'].json.title,\n  resolution: '1080p',\n  aspect_ratio: '16:9',\n  fit: 'cover',\n  background: {\n    type: 'color',\n    value: '#111827'\n  },\n  caption: {\n    file_format: 'srt'\n  },\n  output_format: 'mp4',\n  audio_asset_id: $node['Code - Normalize HeyGen Assets'].json.voice_asset_id\n}) }}",
+        "options": {}
+      },
+      "name": "HTTP - HeyGen Create Avatar Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4432,
+        -160
+      ],
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const videoId =\n  $json.data?.id ||\n  $json.data?.video_id ||\n  $json.id ||\n  $json.video_id ||\n  '';\nif (!videoId) {\n  throw new Error('HeyGen did not return video id. Check Create Avatar Video node body for your HeyGen account/API version.');\n}\nreturn [{ json: { video_id: videoId } }];"
+      },
+      "name": "Code - Extract HeyGen Video ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4672,
+        -160
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "name": "Wait - HeyGen Poll 60 sec",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        5152,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.heygen.com/v3/videos/' + $node['Code - Extract HeyGen Video ID'].json.video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "HTTP - HeyGen Get Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5392,
+        -160
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.completed === true && Boolean($json.video_url) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - HeyGen Video Ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5872,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ $node['Code - Normalize HeyGen Video Status'].json.failed\n  ? [\n      'HeyGen не смог собрать видео.',\n      '',\n      'Причина: ' + ($node['Code - Normalize HeyGen Video Status'].json.failure_message || $node['Code - Normalize HeyGen Video Status'].json.failure_code || 'не указана'),\n      '',\n      'Новый рендер сейчас не запускай. Сначала поменяй фото/голос или проверь причину в execution.'\n    ].join('\\n')\n  : [\n      'HeyGen очень долго рендерит видео.',\n      '',\n      'Я проверял готовность ' + $node['Code - Normalize HeyGen Video Status'].json.max_poll_attempts + ' раз по 60 секунд и не получил CDN-ссылку.',\n      '',\n      'Кредит не надо тратить повторно: открой execution позже или проверь видео в кабинете HeyGen по video_id:',\n      $node['Code - Normalize HeyGen Video Status'].json.video_id\n    ].join('\\n')\n}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send HeyGen Not Ready",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5392,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.file_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "name": "HTTP - Download Final Rendered Reel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6340,
+        -240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "sendVideo",
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ 'Готово. Reels смонтирован: экран сверху + HeyGen снизу. ' + ($node['Code - Normalize Reels Prompt'].json.title || '') }}"
+        },
+        "binaryPropertyName": "data"
+      },
+      "name": "Telegram - Send Final Reel",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        6820,
+        -240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nconst chatId = String($node['Code - Telegram Session Router'].json.chat_id);\nconst videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '');\nif (store.sessions) delete store.sessions[chatId];\nif (store.heygenPolls && videoId) delete store.heygenPolls[videoId];\nreturn items;"
+      },
+      "name": "Code - Clear Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7060,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n  'Не получилось подготовить аудио для ролика.',\n  '',\n  'Причина: ' + ($json.error?.message || 'аудио не распознано или TTS не вернул mp3'),\n  '',\n  'Попробуй отправить материалы заново через /new: короткое четкое голосовое и фото лица.'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send AI Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2272,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n  'HeyGen не принял материалы или вернул ошибку.',\n  '',\n  'Причина: ' + ($json.error?.message || $json.message || 'нет подробностей в ответе API'),\n  '',\n  'Что попробовать: отправить четкое фото лица и короткое голосовое через /new.'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send HeyGen Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2752,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o-mini-tts',\n  voice: 'alloy',\n  input: String($node['Code - Validate Reels Transcript'].json.text || '').slice(0, 4096),\n  instructions: 'Говори естественно, энергично и дружелюбно, как ведущий короткого вертикального ролика. Русская речь, уверенная подача.',\n  response_format: 'mp3',\n  speed: 1\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "name": "HTTP - OpenAI TTS MP3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2272,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) {\n  throw new Error('Renderer did not return converted original voice mp3 in binary.data');\n}\nbinary.fileName = 'original-voice.mp3';\nbinary.fileExtension = 'mp3';\nbinary.mimeType = 'audio/mpeg';\nreturn [item];"
+      },
+      "name": "Code - Normalize Original Voice MP3 Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        -128
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '').trim();\nconst store = $getWorkflowStaticData('global');\nstore.heygenPolls ||= {};\nconst poll = store.heygenPolls[videoId] || { attempts: 0, max_attempts: 12, started_at: new Date().toISOString() };\npoll.attempts = Number(poll.attempts || 0) + 1;\npoll.max_attempts = Number(poll.max_attempts || 12);\nstore.heygenPolls[videoId] = poll;\n\nconst data = $json.data || {};\nconst status = String(data.status || '').toLowerCase();\nconst urls = [\n  data.video_url,\n  data.download_url,\n  data.url,\n  data.video?.url,\n  data.video?.download_url,\n  data.captioned_video_url\n].map((value) => String(value || '').trim()).filter(Boolean);\nconst videoUrl = urls.find((url) => /^https?:\\/\\//i.test(url)) || '';\nconst subtitleUrls = [\n  data.subtitle_url,\n  data.srt_url,\n  data.caption_url,\n  data.captions_url,\n  data.subtitles?.url,\n  data.video?.subtitle_url\n].map((value) => String(value || '').trim()).filter(Boolean);\nconst subtitleUrl = subtitleUrls.find((url) => /^https?:\\/\\//i.test(url)) || '';\nconst failure = String(data.failure_message || data.error?.message || $json.error?.message || '').trim();\nconst failed = status === 'failed' || Boolean(data.failure_code) || /failed|error/i.test(failure);\nconst completed = Boolean(videoUrl) && (!status || status === 'completed' || status === 'success' || status === 'done');\nconst timedOut = !completed && !failed && poll.attempts >= poll.max_attempts;\nconst should_retry = !completed && !failed && !timedOut;\n\nreturn [{\n  json: {\n    video_id: videoId,\n    status: status || (completed ? 'completed' : failed ? 'failed' : timedOut ? 'timeout' : 'pending'),\n    completed,\n    pending: should_retry,\n    failed,\n    timed_out: timedOut,\n    should_retry,\n    poll_attempt: poll.attempts,\n    max_poll_attempts: poll.max_attempts,\n    video_url: videoUrl,\n    subtitle_url: subtitleUrl,\n    failure_code: String(data.failure_code || ''),\n    failure_message: failure,\n    raw_heygen: $json\n  }\n}];"
+      },
+      "name": "Code - Normalize HeyGen Video Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5632,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = String($json.text || '').trim();\nif (text.length < 3) {\n  throw new Error('Whisper returned empty or too short transcript');\n}\nreturn [{ json: { text } }];"
+      },
+      "name": "Code - Validate Reels Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3472,
+        -128
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const screen = $('HTTP - Renderer Upload Screen Recording').first().json || {};\nconst avatar = $('HTTP - HeyGen Upload Avatar Asset').first().json || {};\nconst voice = $('HTTP - HeyGen Upload Voice Asset').first().json || {};\n\nfunction extractAssetId(response, label) {\n  const id = String(response.data?.asset_id || response.asset_id || response.data?.id || response.id || '').trim();\n  if (!id) {\n    const message = String(response.error?.message || response.error || response.message || '').slice(0, 700);\n    throw new Error(label + ' upload did not return asset_id' + (message ? ': ' + message : ''));\n  }\n  return id;\n}\n\nconst screenId = String(screen.screen_id || screen.data?.screen_id || '').trim();\nif (!screenId) {\n  throw new Error('Renderer did not return screen_id for screen recording');\n}\n\nconst title = String($node['Code - Normalize Reels Prompt'].json.title || 'Reels Factory').slice(0, 60);\n\nreturn [{\n  json: {\n    screen_id: screenId,\n    avatar_asset_id: extractAssetId(avatar, 'Avatar image'),\n    voice_asset_id: extractAssetId(voice, 'Voice mp3'),\n    title,\n    screen_duration: $node['Code - Telegram Session Router'].json.screen_duration || 0,\n    voice_duration: $node['Code - Telegram Session Router'].json.voice_duration || 0\n  }\n}];"
+      },
+      "name": "Code - Normalize HeyGen Assets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4192,
+        -160
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) {\n  throw new Error('Renderer did not return final mp4 in binary.data');\n}\nbinary.fileName = 'reels-screen-plus-heygen.mp4';\nbinary.fileExtension = 'mp4';\nbinary.mimeType = 'video/mp4';\nreturn [item];"
+      },
+      "name": "Code - Validate Final Video Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6580,
+        -240
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n  'Готовое видео было смонтировано, но Telegram не смог прикрепить mp4.',\n  '',\n  'Новый HeyGen-рендер не запускай. Проверь execution: файл уже был на шаге “HTTP - Download Final Rendered Reel”.',\n  '',\n  'На всякий случай ссылка на HeyGen-исходник:',\n  $node['Code - Normalize HeyGen Video Status'].json.video_url || 'нет ссылки'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": false
+        }
+      },
+      "name": "Telegram - Send CDN Link Fallback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        6340,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nconst chatId = String($node['Code - Telegram Session Router'].json.chat_id);\nconst videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '');\nif (store.sessions) delete store.sessions[chatId];\nif (store.heygenPolls && videoId) delete store.heygenPolls[videoId];\nreturn items;"
+      },
+      "name": "Code - Clear Session After Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6580,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const videoId = String($json.video_id || '').trim();\nif (!videoId) throw new Error('Missing HeyGen video_id before polling');\nconst store = $getWorkflowStaticData('global');\nstore.heygenPolls ||= {};\nstore.heygenPolls[videoId] = {\n  attempts: 0,\n  max_attempts: 12,\n  started_at: new Date().toISOString()\n};\nreturn [{ json: { video_id: videoId } }];"
+      },
+      "name": "Code - Init HeyGen Poll",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4912,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_retry === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - HeyGen Should Retry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5152,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "name": "Wait - HeyGen Retry 60 sec",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        5392,
+        32
+      ]
+    },
+    {
+      "name": "Telegram - Download Screen Recording",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -144,
+        -128
+      ],
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $node['Code - Telegram Session Router'].json.screen_file_id }}",
+        "additionalFields": {
+          "mimeType": "video/mp4"
+        }
+      }
+    },
+    {
+      "name": "HTTP - Renderer Upload Screen Recording",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        112,
+        -128
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://reels-renderer:8099/upload-screen?session_id=' + encodeURIComponent($node['Code - Telegram Session Router'].json.session_id) }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "HTTP - Renderer Compose Final Reel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6100,
+        -240
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "http://reels-renderer:8099/render",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  screen_id: $node['Code - Normalize HeyGen Assets'].json.screen_id,\n  heygen_url: $node['Code - Normalize HeyGen Video Status'].json.video_url,\n  subtitle_url: $node['Code - Normalize HeyGen Video Status'].json.subtitle_url || '',\n  caption_text: $node['Code - Validate Reels Transcript'].json.text || '',\n  title: $node['Code - Normalize Reels Prompt'].json.title || 'Reels Factory',\n  render_mode: 'dynamic_fullscreen_cuts',\n  render_duration: 21,\n  avatar_speed: 1.10,\n  music: true,\n  music_volume: 0.14,\n  sfx: true,\n  cta_word: 'ПЛАН',\n  hook_text: 'ЗАБУДЬ ПРО ЗАМЕТКИ!'\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Telegram - Send Renderer Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5860,
+        20
+      ],
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n  'HeyGen уже собрал говорящего человека, но финальный монтаж экран+человек не получился.',\n  '',\n  'Новый HeyGen-рендер НЕ запускай: кредит уже потрачен, его не надо тратить повторно.',\n  '',\n  'Причина: ' + ($json.error?.message || $json.message || 'renderer не вернул mp4'),\n  '',\n  'HeyGen CDN исходника:',\n  $node['Code - Normalize HeyGen Video Status'].json.video_url || 'нет ссылки'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": false
+        }
+      }
+    },
+    {
+      "name": "HTTP - Renderer Convert Original Voice to MP3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1792,
+        -128
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://reels-renderer:8099/convert-audio?session_id=' + encodeURIComponent($node['Code - Telegram Session Router'].json.session_id) }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $node['Code - Telegram Session Router'].json.voice_file_id }}",
+        "additionalFields": {
+          "mimeType": "audio/ogg"
+        }
+      },
+      "name": "Telegram - Download Voice For Transcript",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2992,
+        -128
+      ],
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code - Telegram Session Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Telegram Session Router": {
+      "main": [
+        [
+          {
+            "node": "Switch - Ask Or Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Ask Or Process": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Processing Started",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Step Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Send Processing Started": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Download Screen Recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Avatar Photo": {
+      "main": [
+        [
+          {
+            "node": "HTTP - HeyGen Upload Avatar Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - HeyGen Upload Avatar Asset": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Download Voice For Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - HeyGen Upload Voice Asset": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Download Voice For Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Voice For Whisper": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Renderer Convert Original Voice to MP3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Whisper Transcript": {
+      "main": [
+        [
+          {
+            "node": "Code - Validate Reels Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - HeyGen Create Avatar Video": {
+      "main": [
+        [
+          {
+            "node": "Code - Extract HeyGen Video ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Extract HeyGen Video ID": {
+      "main": [
+        [
+          {
+            "node": "Code - Init HeyGen Poll",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - HeyGen Get Video": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize HeyGen Video Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - HeyGen Video Ready": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Renderer Compose Final Reel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - HeyGen Should Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Send Final Reel": {
+      "main": [
+        [
+          {
+            "node": "Code - Clear Session",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send CDN Link Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - GPT-4o-mini Reels Prompt": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Reels Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Reels Prompt": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize HeyGen Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize HeyGen Video Status": {
+      "main": [
+        [
+          {
+            "node": "IF - HeyGen Video Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Validate Reels Transcript": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - GPT-4o-mini Reels Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize HeyGen Assets": {
+      "main": [
+        [
+          {
+            "node": "HTTP - HeyGen Create Avatar Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Validate Final Video Binary": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Final Reel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Renderer Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Send CDN Link Fallback": {
+      "main": [
+        [
+          {
+            "node": "Code - Clear Session After Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Init HeyGen Poll": {
+      "main": [
+        [
+          {
+            "node": "Wait - HeyGen Poll 60 sec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - HeyGen Poll 60 sec": {
+      "main": [
+        [
+          {
+            "node": "HTTP - HeyGen Get Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - HeyGen Should Retry": {
+      "main": [
+        [
+          {
+            "node": "Wait - HeyGen Retry 60 sec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Not Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - HeyGen Retry 60 sec": {
+      "main": [
+        [
+          {
+            "node": "HTTP - HeyGen Get Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Screen Recording": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Renderer Upload Screen Recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Renderer Upload Screen Recording": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Download Avatar Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send HeyGen Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Download Final Rendered Reel": {
+      "main": [
+        [
+          {
+            "node": "Code - Validate Final Video Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Renderer Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Renderer Compose Final Reel": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Download Final Rendered Reel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Renderer Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Send Renderer Error": {
+      "main": [
+        [
+          {
+            "node": "Code - Clear Session After Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Original Voice MP3 Binary": {
+      "main": [
+        [
+          {
+            "node": "HTTP - HeyGen Upload Voice Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Renderer Convert Original Voice to MP3": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Original Voice MP3 Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Voice For Transcript": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Whisper Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionId": "5d96d8cd-a0df-48f6-b444-1f0c59f7870a",
+  "activeVersionId": "5d96d8cd-a0df-48f6-b444-1f0c59f7870a",
+  "versionCounter": 24,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-07-23T18:48:31.470Z",
+    "createdAt": "2026-07-23T18:48:31.470Z",
+    "versionId": "5d96d8cd-a0df-48f6-b444-1f0c59f7870a",
+    "workflowId": "CxA6voTcNCpJUWyt",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Telegram Reels Factory - final screen top + HeyGen bottom\\n\\nFinal flow:\\n1. User sends screen recording.\\n2. User sends avatar photo.\\n3. User sends voice/audio.\\n4. User sends wishes.\\n5. Workflow waits for exact confirmation: РЕНДЕР.\\n6. Only after РЕНДЕР paid HeyGen generation starts.\\n7. Renderer container composes 1080x1920 mp4: screen recording top, HeyGen speaker bottom.\\n\\nRenderer:\\n- Internal URL from n8n container: http://reels-renderer:8099\\n- Docker container is separate from n8n and does not require Execute Command nodes.\\n\\nCredit safety:\\n- HeyGen Create Video is called once per session using Idempotency-Key.\\n- Status polling does not start a second render.\\n- Montage failures do not call HeyGen again; user receives an error with the HeyGen CDN source.\\n- HeyGen speaker is generated as 16:9 so renderer can crop it cleanly into the lower half.\\n\\nPatch:\\n- Top screen layer is now one clear cropped screen recording, no blurred duplicate.\\n- HeyGen voice now uses the original user Telegram voice converted to mp3 by reels-renderer.\\n- OpenAI TTS node is disabled and no longer connected to HeyGen voice upload.\n\nPatch 2026-07-23:\n- Fixed voice binary flow: original Telegram voice is converted before Whisper removes binary data.\n- HeyGen receives cleaned mp3 from the real user voice, not OpenAI TTS.\n- Whisper uses a separate Telegram redownload after voice asset upload, so paid HeyGen Create waits until all prep succeeds.",
+          "height": 360,
+          "width": 660
+        },
+        "name": "Setup Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          -528
+        ]
+      },
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -1104,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const store = $getWorkflowStaticData('global');\nstore.sessions ||= {};\n\nconst msg = $json.message || {};\nconst chatId = String(msg.chat?.id || '');\nconst text = String(msg.text || msg.caption || '').trim();\nconst session = store.sessions[chatId] || {};\n\nfunction largestPhotoFileId(message) {\n  const photos = message.photo || [];\n  if (!photos.length) return '';\n  return photos[photos.length - 1].file_id;\n}\n\nfunction screenVideoFileId(message) {\n  if (message.video?.file_id) return message.video.file_id;\n  if (message.document?.file_id && String(message.document.mime_type || '').startsWith('video/')) return message.document.file_id;\n  return '';\n}\n\nfunction audioFileId(message) {\n  if (message.voice?.file_id) return message.voice.file_id;\n  if (message.audio?.file_id) return message.audio.file_id;\n  if (message.document?.file_id && String(message.document.mime_type || '').startsWith('audio/')) return message.document.file_id;\n  return '';\n}\n\nfunction newSession() {\n  const sid = chatId + '_' + Date.now();\n  store.sessions[chatId] = {\n    session_id: sid,\n    stage: 'need_screen',\n    created_at: new Date().toISOString()\n  };\n  return store.sessions[chatId];\n}\n\nfunction renderSummary(current) {\n  return [\n    '✅ Материалы приняты, но платный HeyGen еще НЕ запущен.',\n    '',\n    'Проверка:',\n    '1) Запись экрана: есть',\n    '2) Фото аватара: есть',\n    '3) Голос/аудио: есть',\n    '4) Пожелания: ' + (current.wishes || 'без пожеланий'),\n    '',\n    'Если все верно, отправь ровно слово:',\n    'РЕНДЕР',\n    '',\n    'Если нужно заменить файлы, отправь /new и начни заново. До слова РЕНДЕР кредиты HeyGen не тратятся.'\n  ].join('\\n');\n}\n\nlet current = session.session_id ? session : newSession();\nlet route = 'ask';\nlet reply = '';\n\nif (/^\\/(start|new)/i.test(text)) {\n  current = newSession();\n  reply = [\n    '🎬 Запускаем новый Reels в формате “экран сверху + говорящий человек снизу”.',\n    '',\n    'Шаг 1: пришли запись экрана Telegram/бота.',\n    'Лучше: вертикальное видео 9:16, 15-40 секунд, без лишних пауз, чтобы было видно отправку голосового и результат бота.'\n  ].join('\\n');\n} else if (current.stage === 'need_screen') {\n  const fileId = screenVideoFileId(msg);\n  if (!fileId) {\n    reply = [\n      'Пришли именно видео-запись экрана Telegram/бота.',\n      '',\n      'Формат: обычное видео или video-файл. Фото/текст на этом шаге не подойдут.'\n    ].join('\\n');\n  } else {\n    current.screen_file_id = fileId;\n    const screenDuration = msg.video?.duration || 0;\n    const screenSize = msg.video?.file_size || msg.document?.file_size || 0;\n    if (screenDuration && screenDuration > 75) {\n      reply = 'Запись экрана слишком длинная. Пришли видео до 60 секунд, чтобы монтаж не получился тяжелым.';\n    } else if (screenSize && screenSize > 20 * 1024 * 1024) {\n      reply = 'Запись экрана слишком большая для Telegram Bot API. Сожми видео или пришли фрагмент до 20 МБ.';\n    } else {\n    current.screen_duration = screenDuration;\n    current.screen_width = msg.video?.width || 0;\n    current.screen_height = msg.video?.height || 0;\n    current.screen_size = screenSize;\n    current.stage = 'need_avatar';\n    reply = [\n      '✅ Запись экрана принята.',\n      '',\n      'Шаг 2: пришли фото или селфи для говорящего HeyGen-человека.',\n      'Лучше: лицо крупно, хорошее освещение, один человек, рот и лицо хорошо видны.'\n    ].join('\\n');\n    }\n  }\n} else if (current.stage === 'need_avatar') {\n  const fileId = largestPhotoFileId(msg);\n  if (!fileId) {\n    reply = 'Теперь пришли фото/селфи для говорящего человека. После этого я попрошу голос.';\n  } else {\n    current.avatar_file_id = fileId;\n    current.stage = 'need_voice';\n    reply = [\n      '✅ Фото принято.',\n      '',\n      'Шаг 3: пришли голосовое или аудиофайл с речью для ролика.',\n      'Лучше 20-35 секунд, четко, без длинных пауз. Это будет речь для губ и движения HeyGen.'\n    ].join('\\n');\n  }\n} else if (current.stage === 'need_voice') {\n  const fileId = audioFileId(msg);\n  if (!fileId) {\n    reply = 'Теперь нужен голос или аудиофайл с речью для ролика.';\n  } else {\n    const voiceDuration = msg.voice?.duration || msg.audio?.duration || 0;\n    const voiceSize = msg.voice?.file_size || msg.audio?.file_size || msg.document?.file_size || 0;\n    if (voiceDuration && voiceDuration > 75) {\n      reply = 'Голос слишком длинный. Пришли речь до 60 секунд, чтобы не тратить лишние HeyGen-кредиты.';\n    } else if (voiceSize && voiceSize > 20 * 1024 * 1024) {\n      reply = 'Аудиофайл слишком большой. Пришли голос/аудио до 20 МБ.';\n    } else {\n    current.voice_file_id = fileId;\n    current.voice_duration = voiceDuration;\n    current.voice_size = voiceSize;\n    current.stage = 'need_wishes';\n    reply = [\n      '✅ Аудио принято.',\n      '',\n      'Шаг 4: напиши пожелания к ролику: какой бот/сервис рекламируем, стиль, акценты, CTA.',\n      'Если пожеланий нет, отправь: без пожеланий.'\n    ].join('\\n');\n    }\n  }\n} else if (current.stage === 'need_wishes') {\n  if (!text) {\n    reply = 'Напиши текстом пожелания к ролику. Если пожеланий нет, отправь: без пожеланий.';\n  } else {\n    current.wishes = text;\n    current.stage = 'need_render_confirm';\n    reply = renderSummary(current);\n  }\n} else if (current.stage === 'need_render_confirm') {\n  if (/^(рендер|render)$/i.test(text)) {\n    current.stage = 'processing';\n    route = 'process';\n    reply = 'Запускаю платную сборку Reels.';\n  } else {\n    reply = renderSummary(current);\n  }\n} else if (current.stage === 'processing') {\n  reply = 'Ролик уже собирается. Новый платный рендер не запускаю. Если хочешь начать заново, отправь /new.';\n} else {\n  current = newSession();\n  reply = 'Начал новый проект. Пришли запись экрана Telegram/бота.';\n}\n\nstore.sessions[chatId] = current;\n\nreturn [{\n  json: {\n    route,\n    reply,\n    chat_id: chatId,\n    session_id: current.session_id,\n    screen_file_id: current.screen_file_id || '',\n    screen_duration: current.screen_duration || 0,\n    screen_width: current.screen_width || 0,\n    screen_height: current.screen_height || 0,\n    screen_size: current.screen_size || 0,\n    avatar_file_id: current.avatar_file_id || '',\n    voice_file_id: current.voice_file_id || '',\n    wishes: current.wishes || '',\n    voice_duration: current.voice_duration || 0,\n    voice_size: current.voice_size || 0\n  }\n}];"
+        },
+        "name": "Code - Telegram Session Router",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -864,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route }}",
+                      "rightValue": "process",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "process"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Ask Or Process",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          -624,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ $json.reply }}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Step Reply",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -384,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "🎬 Рендер подтвержден.\\n\\nСейчас загружаю запись экрана, фото и голос, затем запускаю HeyGen. Платный Create Video будет вызван один раз.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Processing Started",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -384,
+          -128
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $node['Code - Telegram Session Router'].json.avatar_file_id }}",
+          "additionalFields": {
+            "mimeType": "image/jpeg"
+          }
+        },
+        "name": "Telegram - Download Avatar Photo",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          368,
+          -128
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.heygen.com/v3/assets",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "data"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "HTTP - HeyGen Upload Avatar Asset",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          624,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 3000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.heygen.com/v3/assets",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "data"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "HTTP - HeyGen Upload Voice Asset",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2272,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 3000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $node['Code - Telegram Session Router'].json.voice_file_id }}",
+          "additionalFields": {
+            "mimeType": "audio/ogg"
+          }
+        },
+        "name": "Telegram - Download Voice For Whisper",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1552,
+          -128
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "resource": "audio",
+          "operation": "transcribe",
+          "options": {
+            "language": "ru",
+            "temperature": 0
+          }
+        },
+        "name": "OpenAI - Whisper Transcript",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          3232,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gpt-4o-mini"
+          },
+          "responses": {
+            "values": [
+              {
+                "role": "system",
+                "content": "Ты — режиссер коротких вертикальных роликов и промпт-инженер для HeyGen.\\n\\nНа вход приходит транскрипт речи и пожелания пользователя.\\nВерни только валидный JSON без Markdown.\\n\\nСтруктура:\\n{\\n  \"title\": \"короткое название ролика до 60 символов\",\\n  \"motion_prompt\": \"короткий английский prompt для естественной динамики говорящего аватара\"\\n}\\n\\nПравила:\\n- title на русском, без кавычек внутри.\\n- motion_prompt на английском.\\n- Не добавляй факты, которых нет во входе.\\n- Стиль: живой Reels/Shorts, уверенный экспертный тон, без перегруза."
+              },
+              {
+                "content": "={{ \"Транскрипт:\\n\" + $node[\"Code - Validate Reels Transcript\"].json.text + \"\\n\\nПожелания пользователя:\\n\" + $node[\"Code - Telegram Session Router\"].json.wishes }}"
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {
+            "maxTokens": 500,
+            "store": false,
+            "textFormat": {
+              "textOptions": {}
+            },
+            "temperature": 0.4
+          }
+        },
+        "name": "OpenAI - GPT-4o-mini Reels Prompt",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          3712,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(\n  message?.content?.find?.((part) => part.type === 'output_text')?.text ||\n  message?.content?.[0]?.text ||\n  $json.text ||\n  ''\n).trim();\n\nfunction parseJson(value) {\n  const cleaned = value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n  try {\n    return JSON.parse(cleaned);\n  } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    return {};\n  }\n}\n\nconst data = parseJson(raw);\nconst transcript = String($node['OpenAI - Whisper Transcript'].json.text || '').trim();\nconst wishes = String($node['Code - Telegram Session Router'].json.wishes || '').trim();\nconst fallbackTitle = transcript ? transcript.split(/[.!?\\n]/)[0].slice(0, 60) : 'Reels Factory';\nconst title = String(data.title || fallbackTitle || 'Reels Factory').replace(/[\"<>]/g, '').slice(0, 60);\nconst motion = String(\n  data.motion_prompt ||\n  ('Natural talking-head vertical Reels video. Confident friendly delivery, subtle head movement, expressive but not exaggerated. User style notes: ' + wishes)\n).slice(0, 700);\n\nreturn [{\n  json: {\n    raw_model_output: raw,\n    title,\n    motion_prompt: motion\n  }\n}];"
+        },
+        "name": "Code - Normalize Reels Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3952,
+          -128
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.heygen.com/v3/videos",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Idempotency-Key",
+                "value": "={{ 'reels-' + $node['Code - Telegram Session Router'].json.session_id }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  type: 'image',\n  image: {\n    type: 'asset_id',\n    asset_id: $node['Code - Normalize HeyGen Assets'].json.avatar_asset_id\n  },\n  title: $node['Code - Normalize HeyGen Assets'].json.title,\n  resolution: '1080p',\n  aspect_ratio: '16:9',\n  fit: 'cover',\n  background: {\n    type: 'color',\n    value: '#111827'\n  },\n  caption: {\n    file_format: 'srt'\n  },\n  output_format: 'mp4',\n  audio_asset_id: $node['Code - Normalize HeyGen Assets'].json.voice_asset_id\n}) }}",
+          "options": {}
+        },
+        "name": "HTTP - HeyGen Create Avatar Video",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          4432,
+          -160
+        ],
+        "retryOnFail": false,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const videoId =\n  $json.data?.id ||\n  $json.data?.video_id ||\n  $json.id ||\n  $json.video_id ||\n  '';\nif (!videoId) {\n  throw new Error('HeyGen did not return video id. Check Create Avatar Video node body for your HeyGen account/API version.');\n}\nreturn [{ json: { video_id: videoId } }];"
+        },
+        "name": "Code - Extract HeyGen Video ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4672,
+          -160
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 3000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "amount": 60
+        },
+        "name": "Wait - HeyGen Poll 60 sec",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          5152,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ 'https://api.heygen.com/v3/videos/' + $node['Code - Extract HeyGen Video ID'].json.video_id }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {}
+        },
+        "name": "HTTP - HeyGen Get Video",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          5392,
+          -160
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 3000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.completed === true && Boolean($json.video_url) }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - HeyGen Video Ready",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          5872,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ $node['Code - Normalize HeyGen Video Status'].json.failed\n  ? [\n      'HeyGen не смог собрать видео.',\n      '',\n      'Причина: ' + ($node['Code - Normalize HeyGen Video Status'].json.failure_message || $node['Code - Normalize HeyGen Video Status'].json.failure_code || 'не указана'),\n      '',\n      'Новый рендер сейчас не запускай. Сначала поменяй фото/голос или проверь причину в execution.'\n    ].join('\\n')\n  : [\n      'HeyGen очень долго рендерит видео.',\n      '',\n      'Я проверял готовность ' + $node['Code - Normalize HeyGen Video Status'].json.max_poll_attempts + ' раз по 60 секунд и не получил CDN-ссылку.',\n      '',\n      'Кредит не надо тратить повторно: открой execution позже или проверь видео в кабинете HeyGen по video_id:',\n      $node['Code - Normalize HeyGen Video Status'].json.video_id\n    ].join('\\n')\n}}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send HeyGen Not Ready",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          5392,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.file_url }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "file",
+                "outputPropertyName": "data"
+              }
+            }
+          }
+        },
+        "name": "HTTP - Download Final Rendered Reel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          6340,
+          -240
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "operation": "sendVideo",
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "binaryData": true,
+          "additionalFields": {
+            "caption": "={{ 'Готово. Reels смонтирован: экран сверху + HeyGen снизу. ' + ($node['Code - Normalize Reels Prompt'].json.title || '') }}"
+          },
+          "binaryPropertyName": "data"
+        },
+        "name": "Telegram - Send Final Reel",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          6820,
+          -240
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const store = $getWorkflowStaticData('global');\nconst chatId = String($node['Code - Telegram Session Router'].json.chat_id);\nconst videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '');\nif (store.sessions) delete store.sessions[chatId];\nif (store.heygenPolls && videoId) delete store.heygenPolls[videoId];\nreturn items;"
+        },
+        "name": "Code - Clear Session",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          7060,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n  'Не получилось подготовить аудио для ролика.',\n  '',\n  'Причина: ' + ($json.error?.message || 'аудио не распознано или TTS не вернул mp3'),\n  '',\n  'Попробуй отправить материалы заново через /new: короткое четкое голосовое и фото лица.'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send AI Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2272,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n  'HeyGen не принял материалы или вернул ошибку.',\n  '',\n  'Причина: ' + ($json.error?.message || $json.message || 'нет подробностей в ответе API'),\n  '',\n  'Что попробовать: отправить четкое фото лица и короткое голосовое через /new.'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send HeyGen Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2752,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/audio/speech",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o-mini-tts',\n  voice: 'alloy',\n  input: String($node['Code - Validate Reels Transcript'].json.text || '').slice(0, 4096),\n  instructions: 'Говори естественно, энергично и дружелюбно, как ведущий короткого вертикального ролика. Русская речь, уверенная подача.',\n  response_format: 'mp3',\n  speed: 1\n}) }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "file"
+              }
+            }
+          }
+        },
+        "name": "HTTP - OpenAI TTS MP3",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2272,
+          -128
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "disabled": true
+      },
+      {
+        "parameters": {
+          "jsCode": "const item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) {\n  throw new Error('Renderer did not return converted original voice mp3 in binary.data');\n}\nbinary.fileName = 'original-voice.mp3';\nbinary.fileExtension = 'mp3';\nbinary.mimeType = 'audio/mpeg';\nreturn [item];"
+        },
+        "name": "Code - Normalize Original Voice MP3 Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2032,
+          -128
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '').trim();\nconst store = $getWorkflowStaticData('global');\nstore.heygenPolls ||= {};\nconst poll = store.heygenPolls[videoId] || { attempts: 0, max_attempts: 12, started_at: new Date().toISOString() };\npoll.attempts = Number(poll.attempts || 0) + 1;\npoll.max_attempts = Number(poll.max_attempts || 12);\nstore.heygenPolls[videoId] = poll;\n\nconst data = $json.data || {};\nconst status = String(data.status || '').toLowerCase();\nconst urls = [\n  data.video_url,\n  data.download_url,\n  data.url,\n  data.video?.url,\n  data.video?.download_url,\n  data.captioned_video_url\n].map((value) => String(value || '').trim()).filter(Boolean);\nconst videoUrl = urls.find((url) => /^https?:\\/\\//i.test(url)) || '';\nconst subtitleUrls = [\n  data.subtitle_url,\n  data.srt_url,\n  data.caption_url,\n  data.captions_url,\n  data.subtitles?.url,\n  data.video?.subtitle_url\n].map((value) => String(value || '').trim()).filter(Boolean);\nconst subtitleUrl = subtitleUrls.find((url) => /^https?:\\/\\//i.test(url)) || '';\nconst failure = String(data.failure_message || data.error?.message || $json.error?.message || '').trim();\nconst failed = status === 'failed' || Boolean(data.failure_code) || /failed|error/i.test(failure);\nconst completed = Boolean(videoUrl) && (!status || status === 'completed' || status === 'success' || status === 'done');\nconst timedOut = !completed && !failed && poll.attempts >= poll.max_attempts;\nconst should_retry = !completed && !failed && !timedOut;\n\nreturn [{\n  json: {\n    video_id: videoId,\n    status: status || (completed ? 'completed' : failed ? 'failed' : timedOut ? 'timeout' : 'pending'),\n    completed,\n    pending: should_retry,\n    failed,\n    timed_out: timedOut,\n    should_retry,\n    poll_attempt: poll.attempts,\n    max_poll_attempts: poll.max_attempts,\n    video_url: videoUrl,\n    subtitle_url: subtitleUrl,\n    failure_code: String(data.failure_code || ''),\n    failure_message: failure,\n    raw_heygen: $json\n  }\n}];"
+        },
+        "name": "Code - Normalize HeyGen Video Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          5632,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = String($json.text || '').trim();\nif (text.length < 3) {\n  throw new Error('Whisper returned empty or too short transcript');\n}\nreturn [{ json: { text } }];"
+        },
+        "name": "Code - Validate Reels Transcript",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3472,
+          -128
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const screen = $('HTTP - Renderer Upload Screen Recording').first().json || {};\nconst avatar = $('HTTP - HeyGen Upload Avatar Asset').first().json || {};\nconst voice = $('HTTP - HeyGen Upload Voice Asset').first().json || {};\n\nfunction extractAssetId(response, label) {\n  const id = String(response.data?.asset_id || response.asset_id || response.data?.id || response.id || '').trim();\n  if (!id) {\n    const message = String(response.error?.message || response.error || response.message || '').slice(0, 700);\n    throw new Error(label + ' upload did not return asset_id' + (message ? ': ' + message : ''));\n  }\n  return id;\n}\n\nconst screenId = String(screen.screen_id || screen.data?.screen_id || '').trim();\nif (!screenId) {\n  throw new Error('Renderer did not return screen_id for screen recording');\n}\n\nconst title = String($node['Code - Normalize Reels Prompt'].json.title || 'Reels Factory').slice(0, 60);\n\nreturn [{\n  json: {\n    screen_id: screenId,\n    avatar_asset_id: extractAssetId(avatar, 'Avatar image'),\n    voice_asset_id: extractAssetId(voice, 'Voice mp3'),\n    title,\n    screen_duration: $node['Code - Telegram Session Router'].json.screen_duration || 0,\n    voice_duration: $node['Code - Telegram Session Router'].json.voice_duration || 0\n  }\n}];"
+        },
+        "name": "Code - Normalize HeyGen Assets",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4192,
+          -160
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) {\n  throw new Error('Renderer did not return final mp4 in binary.data');\n}\nbinary.fileName = 'reels-screen-plus-heygen.mp4';\nbinary.fileExtension = 'mp4';\nbinary.mimeType = 'video/mp4';\nreturn [item];"
+        },
+        "name": "Code - Validate Final Video Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          6580,
+          -240
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n  'Готовое видео было смонтировано, но Telegram не смог прикрепить mp4.',\n  '',\n  'Новый HeyGen-рендер не запускай. Проверь execution: файл уже был на шаге “HTTP - Download Final Rendered Reel”.',\n  '',\n  'На всякий случай ссылка на HeyGen-исходник:',\n  $node['Code - Normalize HeyGen Video Status'].json.video_url || 'нет ссылки'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "disable_web_page_preview": false
+          }
+        },
+        "name": "Telegram - Send CDN Link Fallback",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          6340,
+          20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const store = $getWorkflowStaticData('global');\nconst chatId = String($node['Code - Telegram Session Router'].json.chat_id);\nconst videoId = String($node['Code - Extract HeyGen Video ID'].json.video_id || '');\nif (store.sessions) delete store.sessions[chatId];\nif (store.heygenPolls && videoId) delete store.heygenPolls[videoId];\nreturn items;"
+        },
+        "name": "Code - Clear Session After Fallback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          6580,
+          20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const videoId = String($json.video_id || '').trim();\nif (!videoId) throw new Error('Missing HeyGen video_id before polling');\nconst store = $getWorkflowStaticData('global');\nstore.heygenPolls ||= {};\nstore.heygenPolls[videoId] = {\n  attempts: 0,\n  max_attempts: 12,\n  started_at: new Date().toISOString()\n};\nreturn [{ json: { video_id: videoId } }];"
+        },
+        "name": "Code - Init HeyGen Poll",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4912,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.should_retry === true }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - HeyGen Should Retry",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          5152,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "amount": 60
+        },
+        "name": "Wait - HeyGen Retry 60 sec",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          5392,
+          32
+        ]
+      },
+      {
+        "name": "Telegram - Download Screen Recording",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -144,
+          -128
+        ],
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $node['Code - Telegram Session Router'].json.screen_file_id }}",
+          "additionalFields": {
+            "mimeType": "video/mp4"
+          }
+        }
+      },
+      {
+        "name": "HTTP - Renderer Upload Screen Recording",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          112,
+          -128
+        ],
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'http://reels-renderer:8099/upload-screen?session_id=' + encodeURIComponent($node['Code - Telegram Session Router'].json.session_id) }}",
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "data"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "name": "HTTP - Renderer Compose Final Reel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          6100,
+          -240
+        ],
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 5000,
+        "parameters": {
+          "method": "POST",
+          "url": "http://reels-renderer:8099/render",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  screen_id: $node['Code - Normalize HeyGen Assets'].json.screen_id,\n  heygen_url: $node['Code - Normalize HeyGen Video Status'].json.video_url,\n  subtitle_url: $node['Code - Normalize HeyGen Video Status'].json.subtitle_url || '',\n  caption_text: $node['Code - Validate Reels Transcript'].json.text || '',\n  title: $node['Code - Normalize Reels Prompt'].json.title || 'Reels Factory',\n  render_mode: 'dynamic_fullscreen_cuts',\n  render_duration: 21,\n  avatar_speed: 1.10,\n  music: true,\n  music_volume: 0.14,\n  sfx: true,\n  cta_word: 'ПЛАН',\n  hook_text: 'ЗАБУДЬ ПРО ЗАМЕТКИ!'\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Telegram - Send Renderer Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          5860,
+          20
+        ],
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n  'HeyGen уже собрал говорящего человека, но финальный монтаж экран+человек не получился.',\n  '',\n  'Новый HeyGen-рендер НЕ запускай: кредит уже потрачен, его не надо тратить повторно.',\n  '',\n  'Причина: ' + ($json.error?.message || $json.message || 'renderer не вернул mp4'),\n  '',\n  'HeyGen CDN исходника:',\n  $node['Code - Normalize HeyGen Video Status'].json.video_url || 'нет ссылки'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "disable_web_page_preview": false
+          }
+        }
+      },
+      {
+        "name": "HTTP - Renderer Convert Original Voice to MP3",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1792,
+          -128
+        ],
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'http://reels-renderer:8099/convert-audio?session_id=' + encodeURIComponent($node['Code - Telegram Session Router'].json.session_id) }}",
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "data"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "file",
+                "outputPropertyName": "data"
+              }
+            }
+          }
+        }
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $node['Code - Telegram Session Router'].json.voice_file_id }}",
+          "additionalFields": {
+            "mimeType": "audio/ogg"
+          }
+        },
+        "name": "Telegram - Download Voice For Transcript",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2992,
+          -128
+        ],
+        "onError": "continueErrorOutput"
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Code - Telegram Session Router",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Telegram Session Router": {
+        "main": [
+          [
+            {
+              "node": "Switch - Ask Or Process",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Ask Or Process": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Processing Started",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Step Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Send Processing Started": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Download Screen Recording",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Avatar Photo": {
+        "main": [
+          [
+            {
+              "node": "HTTP - HeyGen Upload Avatar Asset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - HeyGen Upload Avatar Asset": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Download Voice For Whisper",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - HeyGen Upload Voice Asset": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Download Voice For Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Voice For Whisper": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Renderer Convert Original Voice to MP3",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - Whisper Transcript": {
+        "main": [
+          [
+            {
+              "node": "Code - Validate Reels Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - HeyGen Create Avatar Video": {
+        "main": [
+          [
+            {
+              "node": "Code - Extract HeyGen Video ID",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Extract HeyGen Video ID": {
+        "main": [
+          [
+            {
+              "node": "Code - Init HeyGen Poll",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - HeyGen Get Video": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize HeyGen Video Status",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - HeyGen Video Ready": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Renderer Compose Final Reel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "IF - HeyGen Should Retry",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Send Final Reel": {
+        "main": [
+          [
+            {
+              "node": "Code - Clear Session",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send CDN Link Fallback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - GPT-4o-mini Reels Prompt": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Reels Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Reels Prompt": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize HeyGen Assets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize HeyGen Video Status": {
+        "main": [
+          [
+            {
+              "node": "IF - HeyGen Video Ready",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Validate Reels Transcript": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - GPT-4o-mini Reels Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize HeyGen Assets": {
+        "main": [
+          [
+            {
+              "node": "HTTP - HeyGen Create Avatar Video",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Validate Final Video Binary": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Final Reel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Renderer Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Send CDN Link Fallback": {
+        "main": [
+          [
+            {
+              "node": "Code - Clear Session After Fallback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Init HeyGen Poll": {
+        "main": [
+          [
+            {
+              "node": "Wait - HeyGen Poll 60 sec",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait - HeyGen Poll 60 sec": {
+        "main": [
+          [
+            {
+              "node": "HTTP - HeyGen Get Video",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - HeyGen Should Retry": {
+        "main": [
+          [
+            {
+              "node": "Wait - HeyGen Retry 60 sec",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Not Ready",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait - HeyGen Retry 60 sec": {
+        "main": [
+          [
+            {
+              "node": "HTTP - HeyGen Get Video",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Screen Recording": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Renderer Upload Screen Recording",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Renderer Upload Screen Recording": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Download Avatar Photo",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send HeyGen Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Download Final Rendered Reel": {
+        "main": [
+          [
+            {
+              "node": "Code - Validate Final Video Binary",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Renderer Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Renderer Compose Final Reel": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Download Final Rendered Reel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Renderer Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Send Renderer Error": {
+        "main": [
+          [
+            {
+              "node": "Code - Clear Session After Fallback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Original Voice MP3 Binary": {
+        "main": [
+          [
+            {
+              "node": "HTTP - HeyGen Upload Voice Asset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Renderer Convert Original Voice to MP3": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Original Voice MP3 Binary",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Voice For Transcript": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - Whisper Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Mihail Rogal",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-07-23T18:48:31.763Z",
+        "workflowId": "CxA6voTcNCpJUWyt",
+        "versionId": "5d96d8cd-a0df-48f6-b444-1f0c59f7870a",
+        "event": "activated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-23T18:48:31.637Z",
+        "workflowId": "CxA6voTcNCpJUWyt",
+        "versionId": "5d96d8cd-a0df-48f6-b444-1f0c59f7870a",
+        "event": "deactivated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      }
+    ]
+  }
+}
