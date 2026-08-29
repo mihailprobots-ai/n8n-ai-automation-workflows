@@ -1,0 +1,2700 @@
+{
+  "updatedAt": "2026-07-24T11:36:58.173Z",
+  "createdAt": "2026-07-14T15:28:10.570Z",
+  "name": "Telegram Calorie Tracker - Voice to Google Sheets",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Telegram Calorie Tracker\\n\\n1. Создай новый Telegram credential с токеном нового бота.\\n2. Выбери этот credential во всех Telegram-нoдах и Telegram Trigger.\\n3. В ноде `Google Sheets - Append Meal Row` выбери свою Google Таблицу и лист.\\n4. В первой строке листа можно заранее указать заголовки: Дата, Исходный текст, Детализация продуктов, Калории (ккал), Белки (г), Жиры (г), Углеводы (г).\\n5. После этого активируй workflow.",
+        "height": 260,
+        "width": 520
+      },
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        -416
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "🍏 Я считаю питание по голосовым сообщениям.\n\nЕсли дневник еще не подключен, пришли email Google-аккаунта.\nЕсли дневник уже подключен, просто отправь голосом, что ты съел или выпил.\n\nЛучше говорить так: “рис, курица, салат и капучино без сахара”.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Voice Only Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst audio = message.voice || message.audio || {};\nreturn [\n  {\n    json: {\n      chat_id: String(message.chat?.id || ''),\n      user_id: String(message.from?.id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0)\n    }\n  }\n];"
+      },
+      "name": "Code - Normalize Incoming Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number($json.file_size || 0) }}",
+              "rightValue": 25000000,
+              "operator": {
+                "type": "number",
+                "operation": "larger"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Audio Too Large",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Упс! Голосовое сообщение слишком длинное. Пожалуйста, раздели его на части до 10 минут.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Audio Too Long",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        48,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id || $node['Code - Normalize Incoming Audio'].json.file_id }}",
+        "additionalFields": {
+          "mimeType": "audio/ogg"
+        }
+      },
+      "name": "Telegram - Download Audio File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "ru",
+          "temperature": 0
+        }
+      },
+      "name": "OpenAI - Whisper Transcription",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1000,
+        40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = String($json.text || '').trim();\nreturn [{\n  json: {\n    text,\n    is_valid: text.length >= 5\n  }\n}];"
+      },
+      "name": "Code - Validate Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Transcription OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1480,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Не удалось разобрать аудио. Запиши, пожалуйста, еще раз чуть четче: что съел, примерное количество и напитки.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Unclear Audio",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — внимательный нутрициолог и калькулятор калорий.\n\nНа вход приходит русская расшифровка голосового сообщения о приеме пищи.\n\nТвоя задача:\n1. Распознать продукты, блюда, напитки и количество.\n2. Если вес/объем не указан, сделать реалистичное среднее предположение:\n   - среднее куриное яйцо: 55 г;\n   - тост/кусок хлеба: 30-40 г;\n   - ломтик сыра: 20-25 г;\n   - чашка капучино: 250 мл;\n   - стандартная порция готового блюда: 200-300 г, если нет уточнений.\n3. Посчитать примерную калорийность и БЖУ.\n4. Вернуть только плоский JSON-объект без Markdown, без пояснений, без массива в корне.\n\nПравила:\n- Не добавляй продукты, которых нет во входном тексте.\n- Если продукт неоднозначен, выбери наиболее вероятный бытовой вариант и учти это в поле items.\n- Числа calories/proteins/fats/carbs должны быть числами, округленными до целых.\n- date должен быть в формате YYYY-MM-DD.\n- raw_text должен содержать исходную мысль пользователя кратко, без слов-паразитов.\n\nСтрогая структура ответа:\n{\n  \"date\": \"YYYY-MM-DD\",\n  \"raw_text\": \"три вареных яйца, тост с сыром и капучино\",\n  \"items\": \"Яйцо вареное (3 шт, примерно 165 г), Тост с сыром (1 шт), Капучино без сахара (250 мл)\",\n  \"calories\": 420,\n  \"proteins\": 24,\n  \"fats\": 22,\n  \"carbs\": 31\n}"
+            },
+            {
+              "content": "={{ \"Сегодня: \" + $now.toFormat(\"yyyy-MM-dd\") + \"\\nРасшифровка приема пищи:\\n\" + $json.text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 1200,
+          "store": false,
+          "textFormat": {
+            "textOptions": {}
+          },
+          "temperature": 0.1
+        }
+      },
+      "name": "OpenAI - GPT-4o-mini Calorie JSON",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1720,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(\n  message?.content?.find?.((part) => part.type === 'output_text')?.text ||\n  message?.content?.[0]?.text ||\n  $json.text ||\n  ''\n).trim();\nfunction stripFences(value) {\n  return value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n}\nfunction parseJson(value) {\n  const cleaned = stripFences(value);\n  try {\n    return JSON.parse(cleaned);\n  } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    throw new Error('Model did not return valid calorie JSON');\n  }\n}\nfunction number(value) {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? Math.round(parsed) : 0;\n}\nfunction escapeHtml(value) {\n  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\nfunction progressBar(percent) {\n  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)));\n  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);\n}\nconst data = parseJson(raw);\nconst base = $('Code - Normalize Airtable Limit').first().json;\nconst now = new Date();\nconst date = String(data.date || now.toISOString().slice(0, 10)).slice(0, 10);\nconst time = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });\nconst calories = number(data.calories);\nconst proteins = number(data.proteins);\nconst fats = number(data.fats);\nconst carbs = number(data.carbs);\nconst dailyCalories = Number(base.daily_calories || 0) + calories;\nconst dailyProteins = Number(base.daily_proteins || 0) + proteins;\nconst dailyFats = Number(base.daily_fats || 0) + fats;\nconst dailyCarbs = Number(base.daily_carbs || 0) + carbs;\nconst dailyMeals = Number(base.daily_meals || 0) + 1;\nconst goal = Number(base.goal_calories || 2000);\nconst percent = goal > 0 ? Math.round((dailyCalories / goal) * 100) : 0;\nconst items = String(data.items || data.items_summary || '').trim();\nconst rawText = String(data.raw_text || $('Code - Validate Transcription').first().json.text || '').trim();\nconst telegramText = [\n  '🍏 <b>Прием пищи записан!</b>',\n  '',\n  '📋 <b>Что съедено:</b> ' + escapeHtml(items),\n  '🔥 <b>Этот прием:</b> ' + calories + ' ккал',\n  '💪 <b>БЖУ:</b> Б: ' + proteins + 'г | Ж: ' + fats + 'г | У: ' + carbs + 'г',\n  '',\n  '📊 <b>Сегодня:</b>',\n  '🥣 Приемов пищи: ' + dailyMeals,\n  '🔥 ' + dailyCalories + ' / ' + goal + ' ккал',\n  progressBar(percent) + ' ' + percent + '%',\n  '💪 Б: ' + dailyProteins + 'г | Ж: ' + dailyFats + 'г | У: ' + dailyCarbs + 'г',\n  '',\n  base.spreadsheet_url ? '📈 <a href=\"' + base.spreadsheet_url + '\">Открыть дневник питания</a>' : '<i>Данные внесены в личную таблицу.</i>'\n].join('\\n');\nreturn [\n  {\n    json: {\n      'Дата': date,\n      'Время': time,\n      'Прием': 'Прием ' + dailyMeals,\n      'Исходный текст': rawText,\n      'Детализация продуктов': items,\n      'Калории (ккал)': calories,\n      'Белки (г)': proteins,\n      'Жиры (г)': fats,\n      'Углеводы (г)': carbs,\n      'Итого ккал за день': dailyCalories,\n      daily_calories_total: dailyCalories,\n      daily_proteins_total: dailyProteins,\n      daily_fats_total: dailyFats,\n      daily_carbs_total: dailyCarbs,\n      daily_meals_total: dailyMeals,\n      goal_calories: goal,\n      telegram_text: telegramText,\n      raw_model_output: raw\n    }\n  }\n];"
+      },
+      "name": "Code - Prepare Sheet Row and Telegram Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ $node['Code - Prepare Sheet Row and Telegram Report'].json.telegram_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "name": "Telegram - Send Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2680,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Сейчас не получилось посчитать питание. Попробуй переотправить это голосовое еще раз через минуту.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send AI Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1488,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Я посчитал прием пищи, но сейчас не смог записать его в твою таблицу. Пришли email еще раз, и я заново подключу личный дневник питания.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Sheet Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1968,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ \"{telegram_id}='\" + String($node['Telegram Trigger'].json.message.from.id) + \"'\" }}"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - Find User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -920,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nconst audio = $('Code - Normalize Incoming Audio').first().json;\nconst record = found || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nreturn [\n  {\n    json: {\n      record_id: record?.id || '',\n      telegram_id: String(audio.user_id || ''),\n      chat_id: String(audio.chat_id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0),\n      daily_requests: dailyRequests,\n      status,\n      request_log: String(fields.request_log || ''),\n      email: String(fields.email || ''),\n      spreadsheet_id: spreadsheetId,\n      spreadsheet_url: String(fields.spreadsheet_url || ''),\n      daily_calories: Number(fields.daily_calories || 0),\n      daily_proteins: Number(fields.daily_proteins || 0),\n      daily_fats: Number(fields.daily_fats || 0),\n      daily_carbs: Number(fields.daily_carbs || 0),\n      daily_meals: Number(fields.daily_meals || 0),\n      goal_calories: Number(fields.goal_calories || 2000),\n      limit_exceeded: status === 'free' && dailyRequests >= 10\n    }\n  }\n];"
+      },
+      "name": "Code - Normalize Airtable Limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.limit_exceeded }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "limit_exceeded"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Switch - Limit Check",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Telegram - Send Limit Exhausted",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1008,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable Limit'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable Limit'].json.daily_requests || 0) + 1,\n        daily_calories: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_calories_total || 0),\n        daily_proteins: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_proteins_total || 0),\n        daily_fats: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_fats_total || 0),\n        daily_carbs: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_carbs_total || 0),\n        daily_meals: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_meals_total || 0),\n        last_meal_at: new Date().toISOString(),\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'],\n        last_result: $node['Code - Prepare Sheet Row and Telegram Report'].json.telegram_text,\n        last_items: $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'],\n        last_calories: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || 0),\n        last_proteins: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)'] || 0),\n        last_fats: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0416\\u0438\\u0440\\u044b (\\u0433)'] || 0),\n        last_carbs: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)'] || 0),\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable Limit'].json.request_log || '');\n          const row = $node['Code - Prepare Sheet Row and Telegram Report'].json;\n          const rawText = String(row['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'] || '').slice(0, 4000);\n          const items = String(row['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'] || '').slice(0, 4000);\n          const kcal = String(row['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || '');\n          const day = String(row.daily_calories_total || '');\n          const entry = '[' + new Date().toISOString() + ']\\nRAW: ' + rawText + '\\nITEMS: ' + items + '\\nKCAL: ' + kcal + '\\nDAY_TOTAL: ' + day + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      },
+      "name": "Airtable - Update Limit and Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2440,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "name": "Schedule Trigger - Airtable Daily Reset 00:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -688,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "{status}='free'"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Airtable - List Free Users For Reset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -448,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({\n  json: {\n    records: [\n      {\n        id: record.id,\n        fields: {\n          daily_requests: 0,\n          daily_calories: 0,\n          daily_proteins: 0,\n          daily_fats: 0,\n          daily_carbs: 0,\n          daily_meals: 0,\n          updated_at: new Date().toISOString()\n        }\n      }\n    ],\n    typecast: true\n  }\n}));"
+      },
+      "name": "Code - Build Reset Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Airtable - Reset Daily Requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        48,
+        528
+      ]
+    },
+    {
+      "name": "Code - Calorie Setup Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        -40
+      ],
+      "parameters": {
+        "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst records = $json.records || [];\nconst record = records[0] || null;\nconst fields = record?.fields || {};\nconst text = String(message.text || message.caption || '').trim();\nconst emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\nconst audio = message.voice || message.audio || null;\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nlet route = 'fallback';\nif (emailMatch) {\n  route = 'create_sheet';\n} else if (audio?.file_id && spreadsheetId) {\n  route = 'process_audio';\n} else if (text === '/start' || text === '/new' || !spreadsheetId) {\n  route = 'ask_email';\n}\nconst telegramId = String(message.from?.id || '');\nconst firstName = String(message.from?.first_name || '').trim();\nconst username = String(message.from?.username || '').trim();\nconst safeName = (firstName || username || telegramId).replace(/[\\\\/:*?\"<>|]/g, ' ').slice(0, 80).trim();\nreturn [\n  {\n    json: {\n      route,\n      user_exists: Boolean(record?.id),\n      record_id: record?.id || '',\n      telegram_id: telegramId,\n      chat_id: String(message.chat?.id || ''),\n      username,\n      first_name: firstName,\n      email: emailMatch ? emailMatch[0].toLowerCase() : String(fields.email || ''),\n      spreadsheet_id: spreadsheetId,\n      spreadsheet_url: String(fields.spreadsheet_url || ''),\n      sheet_title: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u0438\\u043a \\u043f\\u0438\\u0442\\u0430\\u043d\\u0438\\u044f - ' + safeName,\n      onboarding_status: String(fields.onboarding_status || ''),\n      goal_calories: Number(fields.goal_calories || 2000)\n    }\n  }\n];"
+      }
+    },
+    {
+      "name": "Switch - Calorie Setup Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -440,
+        -40
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'ask_email' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ask_email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'create_sheet' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "create_sheet"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route === 'process_audio' }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "process_audio"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "name": "Telegram - Ask Email For Calorie Sheet",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        -360
+      ],
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "🍏 Привет! Я буду вести для тебя личный дневник питания.\n\nСначала подключим таблицу: пришли email Google-аккаунта, куда дать доступ редактора.\n\nЯ сам создам таблицу, буду записывать туда приемы пищи, калории и БЖУ, а сюда пришлю понятный отчет по дню.\n\nНапиши email одним сообщением.\nПример: name@gmail.com",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      }
+    },
+    {
+      "name": "IF - Calorie Setup User Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -200,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.user_exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Airtable - Update Calorie Setup Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        40,
+        -120
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Calorie Setup Router'].json.record_id,\n      fields: {\n        email: $node['Code - Calorie Setup Router'].json.email,\n        chat_id: $node['Code - Calorie Setup Router'].json.chat_id,\n        username: $node['Code - Calorie Setup Router'].json.username,\n        first_name: $node['Code - Calorie Setup Router'].json.first_name,\n        onboarding_status: 'creating_sheet',\n        goal_calories: Number($node['Code - Calorie Setup Router'].json.goal_calories || 2000),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Airtable - Create Calorie Setup User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        40,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: $node['Code - Calorie Setup Router'].json.telegram_id,\n        chat_id: $node['Code - Calorie Setup Router'].json.chat_id,\n        username: $node['Code - Calorie Setup Router'].json.username,\n        first_name: $node['Code - Calorie Setup Router'].json.first_name,\n        email: $node['Code - Calorie Setup Router'].json.email,\n        daily_requests: 0,\n        daily_calories: 0,\n        daily_proteins: 0,\n        daily_fats: 0,\n        daily_carbs: 0,\n        daily_meals: 0,\n        goal_calories: Number($node['Code - Calorie Setup Router'].json.goal_calories || 2000),\n        status: 'free',\n        onboarding_status: 'creating_sheet',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Code - Calorie Setup Record After Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        -40
+      ],
+      "parameters": {
+        "jsCode": "const record = ($json.records || [])[0] || $json;\nif (!record?.id) throw new Error('Airtable setup record was not returned');\nconst router = $('Code - Calorie Setup Router').first().json;\nreturn [\n  {\n    json: {\n      record_id: record.id,\n      email: router.email,\n      sheet_title: router.sheet_title,\n      goal_calories: Number(router.goal_calories || 2000)\n    }\n  }\n];"
+      }
+    },
+    {
+      "name": "HTTP - Google Create Calorie Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        520,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: { title: $node['Code - Calorie Setup Record After Upsert'].json.sheet_title },\n  sheets: [\n    { properties: { title: '\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438', gridProperties: { rowCount: 1000, columnCount: 10 } } },\n    { properties: { title: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u043e\\u0439 \\u043f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441', gridProperties: { rowCount: 370, columnCount: 8 } } }\n  ]\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "HTTP - Google Initialize Calorie Headers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        760,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId + '/values:batchUpdate' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  valueInputOption: 'RAW',\n  data: [\n    {\n      range: '\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438!A1:J1',\n      values: [[\n        '\\u0414\\u0430\\u0442\\u0430',\n        '\\u0412\\u0440\\u0435\\u043c\\u044f',\n        '\\u041f\\u0440\\u0438\\u0435\\u043c',\n        '\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442',\n        '\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432',\n        '\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)',\n        '\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)',\n        '\\u0416\\u0438\\u0440\\u044b (\\u0433)',\n        '\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)',\n        '\\u0418\\u0442\\u043e\\u0433\\u043e \\u043a\\u043a\\u0430\\u043b \\u0437\\u0430 \\u0434\\u0435\\u043d\\u044c'\n      ]]\n    },\n    {\n      range: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u043e\\u0439 \\u043f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441!A1:H1',\n      values: [[\n        '\\u0414\\u0430\\u0442\\u0430',\n        '\\u041f\\u0440\\u0438\\u0435\\u043c\\u043e\\u0432',\n        '\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438',\n        '\\u0426\\u0435\\u043b\\u044c',\n        '\\u0411\\u0435\\u043b\\u043a\\u0438',\n        '\\u0416\\u0438\\u0440\\u044b',\n        '\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b',\n        '\\u041f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441'\n      ]]\n    }\n  ]\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "HTTP - Google Share Calorie Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1000,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId + '/permissions?sendNotificationEmail=false' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  role: 'writer',\n  type: 'user',\n  emailAddress: $node['Code - Calorie Setup Record After Upsert'].json.email\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Airtable - Save Calorie Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1240,
+        -40
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Calorie Setup Record After Upsert'].json.record_id,\n      fields: {\n        email: $node['Code - Calorie Setup Record After Upsert'].json.email,\n        spreadsheet_id: $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId,\n        spreadsheet_url: $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId),\n        sheet_title: $node['Code - Calorie Setup Record After Upsert'].json.sheet_title,\n        onboarding_status: 'ready',\n        sheet_created_at: new Date().toISOString(),\n        daily_calories: 0,\n        daily_proteins: 0,\n        daily_fats: 0,\n        daily_carbs: 0,\n        daily_meals: 0,\n        goal_calories: Number($node['Code - Calorie Setup Record After Upsert'].json.goal_calories || 2000),\n        updated_at: new Date().toISOString(),\n        last_result: 'Personal calorie Google Sheet created and shared with ' + $node['Code - Calorie Setup Record After Upsert'].json.email\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Telegram - Send Calorie Setup Complete",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1480,
+        -40
+      ],
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "={{ [\n'✅ <b>Готово!</b> Личный дневник питания создан.',\n'',\n'Доступ редактора выдан на:',\n$node['Code - Calorie Setup Record After Upsert'].json.email,\n'',\n'Открыть таблицу: <a href=\"' + ($node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId)) + '\">Google Таблица</a>',\n'',\n'Теперь просто отправь голосовое: что съел, примерное количество и напитки. Я посчитаю калории, БЖУ и покажу прогресс за день.'\n].join('\\n') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      }
+    },
+    {
+      "name": "Telegram - Send Calorie Setup Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+        "text": "Не получилось создать Google Таблицу или дать доступ. Проверь email и попробуй еще раз. Если ошибка повторится, нужно переподключить Google Sheets/Drive credentials в n8n.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      }
+    },
+    {
+      "name": "HTTP - Google Append Meal Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2200,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['Code - Normalize Airtable Limit'].json.spreadsheet_id + '/values/' + encodeURIComponent('\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438!A:J') + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  values: [[\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0430\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0412\\u0440\\u0435\\u043c\\u044f'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041f\\u0440\\u0438\\u0435\\u043c'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'],\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0416\\u0438\\u0440\\u044b (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0442\\u043e\\u0433\\u043e \\u043a\\u043a\\u0430\\u043b \\u0437\\u0430 \\u0434\\u0435\\u043d\\u044c'] || 0)\n  ]]\n}) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Find User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Incoming Audio": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Airtable Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Audio Too Large": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Audio Too Long",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Whisper Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Whisper Transcription": {
+      "main": [
+        [
+          {
+            "node": "Code - Validate Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Validate Transcription": {
+      "main": [
+        [
+          {
+            "node": "IF - Transcription OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Transcription OK": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - GPT-4o-mini Calorie JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Unclear Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - GPT-4o-mini Calorie JSON": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Sheet Row and Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Sheet Row and Telegram Report": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Append Meal Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Find User": {
+      "main": [
+        [
+          {
+            "node": "Code - Calorie Setup Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Airtable Limit": {
+      "main": [
+        [
+          {
+            "node": "Switch - Limit Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Limit Check": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Limit Exhausted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Audio Too Large",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Update Limit and Log": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger - Airtable Daily Reset 00:00": {
+      "main": [
+        [
+          {
+            "node": "Airtable - List Free Users For Reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - List Free Users For Reset": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Reset Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Reset Batches": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Reset Daily Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Calorie Setup Router": {
+      "main": [
+        [
+          {
+            "node": "Switch - Calorie Setup Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Calorie Setup Route": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Ask Email For Calorie Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Calorie Setup User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code - Normalize Incoming Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Voice Only Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Calorie Setup User Exists": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Update Calorie Setup Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Airtable - Create Calorie Setup User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Update Calorie Setup Email": {
+      "main": [
+        [
+          {
+            "node": "Code - Calorie Setup Record After Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create Calorie Setup User": {
+      "main": [
+        [
+          {
+            "node": "Code - Calorie Setup Record After Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Calorie Setup Record After Upsert": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Create Calorie Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Create Calorie Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Initialize Calorie Headers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Calorie Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Initialize Calorie Headers": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Google Share Calorie Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Calorie Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Share Calorie Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Save Calorie Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Calorie Setup Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Save Calorie Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Calorie Setup Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Google Append Meal Row": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Update Limit and Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Sheet Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+  "activeVersionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+  "versionCounter": 24,
+  "triggerCount": 2,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-07-24T11:35:07.779Z",
+    "createdAt": "2026-07-24T11:35:07.779Z",
+    "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+    "workflowId": "nMWMNxTH1GAOp7kA",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Telegram Calorie Tracker\\n\\n1. Создай новый Telegram credential с токеном нового бота.\\n2. Выбери этот credential во всех Telegram-нoдах и Telegram Trigger.\\n3. В ноде `Google Sheets - Append Meal Row` выбери свою Google Таблицу и лист.\\n4. В первой строке листа можно заранее указать заголовки: Дата, Исходный текст, Детализация продуктов, Калории (ккал), Белки (г), Жиры (г), Углеводы (г).\\n5. После этого активируй workflow.",
+          "height": 260,
+          "width": 520
+        },
+        "name": "Setup Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1104,
+          -416
+        ]
+      },
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -928,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "🍏 Я считаю питание по голосовым сообщениям.\n\nЕсли дневник еще не подключен, пришли email Google-аккаунта.\nЕсли дневник уже подключен, просто отправь голосом, что ты съел или выпил.\n\nЛучше говорить так: “рис, курица, салат и капучино без сахара”.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Voice Only Help",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -448,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst audio = message.voice || message.audio || {};\nreturn [\n  {\n    json: {\n      chat_id: String(message.chat?.id || ''),\n      user_id: String(message.from?.id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0)\n    }\n  }\n];"
+        },
+        "name": "Code - Normalize Incoming Audio",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -200,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ Number($json.file_size || 0) }}",
+                "rightValue": 25000000,
+                "operator": {
+                  "type": "number",
+                  "operation": "larger"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - Audio Too Large",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          520,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Упс! Голосовое сообщение слишком длинное. Пожалуйста, раздели его на части до 10 минут.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Audio Too Long",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          48,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "fileId": "={{ $json.file_id || $node['Code - Normalize Incoming Audio'].json.file_id }}",
+          "additionalFields": {
+            "mimeType": "audio/ogg"
+          }
+        },
+        "name": "Telegram - Download Audio File",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          760,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "audio",
+          "operation": "transcribe",
+          "options": {
+            "language": "ru",
+            "temperature": 0
+          }
+        },
+        "name": "OpenAI - Whisper Transcription",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          1000,
+          40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = String($json.text || '').trim();\nreturn [{\n  json: {\n    text,\n    is_valid: text.length >= 5\n  }\n}];"
+        },
+        "name": "Code - Validate Transcription",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1240,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.is_valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "name": "IF - Transcription OK",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1480,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Не удалось разобрать аудио. Запиши, пожалуйста, еще раз чуть четче: что съел, примерное количество и напитки.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Unclear Audio",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1248,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gpt-4o-mini"
+          },
+          "responses": {
+            "values": [
+              {
+                "role": "system",
+                "content": "Ты — внимательный нутрициолог и калькулятор калорий.\n\nНа вход приходит русская расшифровка голосового сообщения о приеме пищи.\n\nТвоя задача:\n1. Распознать продукты, блюда, напитки и количество.\n2. Если вес/объем не указан, сделать реалистичное среднее предположение:\n   - среднее куриное яйцо: 55 г;\n   - тост/кусок хлеба: 30-40 г;\n   - ломтик сыра: 20-25 г;\n   - чашка капучино: 250 мл;\n   - стандартная порция готового блюда: 200-300 г, если нет уточнений.\n3. Посчитать примерную калорийность и БЖУ.\n4. Вернуть только плоский JSON-объект без Markdown, без пояснений, без массива в корне.\n\nПравила:\n- Не добавляй продукты, которых нет во входном тексте.\n- Если продукт неоднозначен, выбери наиболее вероятный бытовой вариант и учти это в поле items.\n- Числа calories/proteins/fats/carbs должны быть числами, округленными до целых.\n- date должен быть в формате YYYY-MM-DD.\n- raw_text должен содержать исходную мысль пользователя кратко, без слов-паразитов.\n\nСтрогая структура ответа:\n{\n  \"date\": \"YYYY-MM-DD\",\n  \"raw_text\": \"три вареных яйца, тост с сыром и капучино\",\n  \"items\": \"Яйцо вареное (3 шт, примерно 165 г), Тост с сыром (1 шт), Капучино без сахара (250 мл)\",\n  \"calories\": 420,\n  \"proteins\": 24,\n  \"fats\": 22,\n  \"carbs\": 31\n}"
+              },
+              {
+                "content": "={{ \"Сегодня: \" + $now.toFormat(\"yyyy-MM-dd\") + \"\\nРасшифровка приема пищи:\\n\" + $json.text }}"
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {
+            "maxTokens": 1200,
+            "store": false,
+            "textFormat": {
+              "textOptions": {}
+            },
+            "temperature": 0.1
+          }
+        },
+        "name": "OpenAI - GPT-4o-mini Calorie JSON",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.3,
+        "position": [
+          1720,
+          -40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const message = $json.output?.find?.((item) => item.type === 'message') || $json.output?.[0];\nconst raw = String(\n  message?.content?.find?.((part) => part.type === 'output_text')?.text ||\n  message?.content?.[0]?.text ||\n  $json.text ||\n  ''\n).trim();\nfunction stripFences(value) {\n  return value.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n}\nfunction parseJson(value) {\n  const cleaned = stripFences(value);\n  try {\n    return JSON.parse(cleaned);\n  } catch (error) {\n    const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { return JSON.parse(match[0]); } catch (_) {}\n    }\n    throw new Error('Model did not return valid calorie JSON');\n  }\n}\nfunction number(value) {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? Math.round(parsed) : 0;\n}\nfunction escapeHtml(value) {\n  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\nfunction progressBar(percent) {\n  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)));\n  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);\n}\nconst data = parseJson(raw);\nconst base = $('Code - Normalize Airtable Limit').first().json;\nconst now = new Date();\nconst date = String(data.date || now.toISOString().slice(0, 10)).slice(0, 10);\nconst time = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });\nconst calories = number(data.calories);\nconst proteins = number(data.proteins);\nconst fats = number(data.fats);\nconst carbs = number(data.carbs);\nconst dailyCalories = Number(base.daily_calories || 0) + calories;\nconst dailyProteins = Number(base.daily_proteins || 0) + proteins;\nconst dailyFats = Number(base.daily_fats || 0) + fats;\nconst dailyCarbs = Number(base.daily_carbs || 0) + carbs;\nconst dailyMeals = Number(base.daily_meals || 0) + 1;\nconst goal = Number(base.goal_calories || 2000);\nconst percent = goal > 0 ? Math.round((dailyCalories / goal) * 100) : 0;\nconst items = String(data.items || data.items_summary || '').trim();\nconst rawText = String(data.raw_text || $('Code - Validate Transcription').first().json.text || '').trim();\nconst telegramText = [\n  '🍏 <b>Прием пищи записан!</b>',\n  '',\n  '📋 <b>Что съедено:</b> ' + escapeHtml(items),\n  '🔥 <b>Этот прием:</b> ' + calories + ' ккал',\n  '💪 <b>БЖУ:</b> Б: ' + proteins + 'г | Ж: ' + fats + 'г | У: ' + carbs + 'г',\n  '',\n  '📊 <b>Сегодня:</b>',\n  '🥣 Приемов пищи: ' + dailyMeals,\n  '🔥 ' + dailyCalories + ' / ' + goal + ' ккал',\n  progressBar(percent) + ' ' + percent + '%',\n  '💪 Б: ' + dailyProteins + 'г | Ж: ' + dailyFats + 'г | У: ' + dailyCarbs + 'г',\n  '',\n  base.spreadsheet_url ? '📈 <a href=\"' + base.spreadsheet_url + '\">Открыть дневник питания</a>' : '<i>Данные внесены в личную таблицу.</i>'\n].join('\\n');\nreturn [\n  {\n    json: {\n      'Дата': date,\n      'Время': time,\n      'Прием': 'Прием ' + dailyMeals,\n      'Исходный текст': rawText,\n      'Детализация продуктов': items,\n      'Калории (ккал)': calories,\n      'Белки (г)': proteins,\n      'Жиры (г)': fats,\n      'Углеводы (г)': carbs,\n      'Итого ккал за день': dailyCalories,\n      daily_calories_total: dailyCalories,\n      daily_proteins_total: dailyProteins,\n      daily_fats_total: dailyFats,\n      daily_carbs_total: dailyCarbs,\n      daily_meals_total: dailyMeals,\n      goal_calories: goal,\n      telegram_text: telegramText,\n      raw_model_output: raw\n    }\n  }\n];"
+        },
+        "name": "Code - Prepare Sheet Row and Telegram Report",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1960,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ $node['Code - Prepare Sheet Row and Telegram Report'].json.telegram_text }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        },
+        "name": "Telegram - Send Result",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          2680,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Сейчас не получилось посчитать питание. Попробуй переотправить это голосовое еще раз через минуту.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send AI Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1488,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Я посчитал прием пищи, но сейчас не смог записать его в твою таблицу. Пришли email еще раз, и я заново подключу личный дневник питания.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Sheet Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1968,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "={{ \"{telegram_id}='\" + String($node['Telegram Trigger'].json.message.from.id) + \"'\" }}"
+              },
+              {
+                "name": "maxRecords",
+                "value": "1"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - Find User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -920,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const found = $('Airtable - Find User').first().json.records?.[0];\nconst audio = $('Code - Normalize Incoming Audio').first().json;\nconst record = found || null;\nconst fields = record?.fields || {};\nconst dailyRequests = Number(fields.daily_requests || 0);\nconst status = fields.status || 'free';\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nreturn [\n  {\n    json: {\n      record_id: record?.id || '',\n      telegram_id: String(audio.user_id || ''),\n      chat_id: String(audio.chat_id || ''),\n      file_id: audio.file_id,\n      file_size: Number(audio.file_size || 0),\n      duration: Number(audio.duration || 0),\n      daily_requests: dailyRequests,\n      status,\n      request_log: String(fields.request_log || ''),\n      email: String(fields.email || ''),\n      spreadsheet_id: spreadsheetId,\n      spreadsheet_url: String(fields.spreadsheet_url || ''),\n      daily_calories: Number(fields.daily_calories || 0),\n      daily_proteins: Number(fields.daily_proteins || 0),\n      daily_fats: Number(fields.daily_fats || 0),\n      daily_carbs: Number(fields.daily_carbs || 0),\n      daily_meals: Number(fields.daily_meals || 0),\n      goal_calories: Number(fields.goal_calories || 2000),\n      limit_exceeded: status === 'free' && dailyRequests >= 10\n    }\n  }\n];"
+        },
+        "name": "Code - Normalize Airtable Limit",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          40,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.limit_exceeded }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "limit_exceeded"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "name": "Switch - Limit Check",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          280,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Лимит на сегодня исчерпан (10/10). Возвращайся завтра.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "name": "Telegram - Send Limit Exhausted",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1008,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Normalize Airtable Limit'].json.record_id,\n      fields: {\n        daily_requests: Number($node['Code - Normalize Airtable Limit'].json.daily_requests || 0) + 1,\n        daily_calories: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_calories_total || 0),\n        daily_proteins: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_proteins_total || 0),\n        daily_fats: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_fats_total || 0),\n        daily_carbs: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_carbs_total || 0),\n        daily_meals: Number($node['Code - Prepare Sheet Row and Telegram Report'].json.daily_meals_total || 0),\n        last_meal_at: new Date().toISOString(),\n        updated_at: new Date().toISOString(),\n        last_request_at: new Date().toISOString(),\n        last_raw_text: $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'],\n        last_result: $node['Code - Prepare Sheet Row and Telegram Report'].json.telegram_text,\n        last_items: $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'],\n        last_calories: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || 0),\n        last_proteins: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)'] || 0),\n        last_fats: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0416\\u0438\\u0440\\u044b (\\u0433)'] || 0),\n        last_carbs: Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)'] || 0),\n        request_log: (() => {\n          const oldLog = String($node['Code - Normalize Airtable Limit'].json.request_log || '');\n          const row = $node['Code - Prepare Sheet Row and Telegram Report'].json;\n          const rawText = String(row['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'] || '').slice(0, 4000);\n          const items = String(row['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'] || '').slice(0, 4000);\n          const kcal = String(row['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || '');\n          const day = String(row.daily_calories_total || '');\n          const entry = '[' + new Date().toISOString() + ']\\nRAW: ' + rawText + '\\nITEMS: ' + items + '\\nKCAL: ' + kcal + '\\nDAY_TOTAL: ' + day + '\\n---\\n';\n          return (entry + oldLog).slice(0, 95000);\n        })()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        },
+        "name": "Airtable - Update Limit and Log",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2440,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {}
+            ]
+          }
+        },
+        "name": "Schedule Trigger - Airtable Daily Reset 00:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -688,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "filterByFormula",
+                "value": "{status}='free'"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Airtable - List Free Users For Reset",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -448,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const records = $json.records || [];\nreturn records.map((record) => ({\n  json: {\n    records: [\n      {\n        id: record.id,\n        fields: {\n          daily_requests: 0,\n          daily_calories: 0,\n          daily_proteins: 0,\n          daily_fats: 0,\n          daily_carbs: 0,\n          daily_meals: 0,\n          updated_at: new Date().toISOString()\n        }\n      }\n    ],\n    typecast: true\n  }\n}));"
+        },
+        "name": "Code - Build Reset Batches",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -208,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {}
+        },
+        "name": "Airtable - Reset Daily Requests",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          48,
+          528
+        ]
+      },
+      {
+        "name": "Code - Calorie Setup Router",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -680,
+          -40
+        ],
+        "parameters": {
+          "jsCode": "const trigger = $('Telegram Trigger').first().json;\nconst message = trigger.message || {};\nconst records = $json.records || [];\nconst record = records[0] || null;\nconst fields = record?.fields || {};\nconst text = String(message.text || message.caption || '').trim();\nconst emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\nconst audio = message.voice || message.audio || null;\nconst spreadsheetId = String(fields.spreadsheet_id || '').trim();\nlet route = 'fallback';\nif (emailMatch) {\n  route = 'create_sheet';\n} else if (audio?.file_id && spreadsheetId) {\n  route = 'process_audio';\n} else if (text === '/start' || text === '/new' || !spreadsheetId) {\n  route = 'ask_email';\n}\nconst telegramId = String(message.from?.id || '');\nconst firstName = String(message.from?.first_name || '').trim();\nconst username = String(message.from?.username || '').trim();\nconst safeName = (firstName || username || telegramId).replace(/[\\\\/:*?\"<>|]/g, ' ').slice(0, 80).trim();\nreturn [\n  {\n    json: {\n      route,\n      user_exists: Boolean(record?.id),\n      record_id: record?.id || '',\n      telegram_id: telegramId,\n      chat_id: String(message.chat?.id || ''),\n      username,\n      first_name: firstName,\n      email: emailMatch ? emailMatch[0].toLowerCase() : String(fields.email || ''),\n      spreadsheet_id: spreadsheetId,\n      spreadsheet_url: String(fields.spreadsheet_url || ''),\n      sheet_title: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u0438\\u043a \\u043f\\u0438\\u0442\\u0430\\u043d\\u0438\\u044f - ' + safeName,\n      onboarding_status: String(fields.onboarding_status || ''),\n      goal_calories: Number(fields.goal_calories || 2000)\n    }\n  }\n];"
+        }
+      },
+      {
+        "name": "Switch - Calorie Setup Route",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          -440,
+          -40
+        ],
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'ask_email' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "ask_email"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'create_sheet' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "create_sheet"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route === 'process_audio' }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "process_audio"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        }
+      },
+      {
+        "name": "Telegram - Ask Email For Calorie Sheet",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -200,
+          -360
+        ],
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "🍏 Привет! Я буду вести для тебя личный дневник питания.\n\nСначала подключим таблицу: пришли email Google-аккаунта, куда дать доступ редактора.\n\nЯ сам создам таблицу, буду записывать туда приемы пищи, калории и БЖУ, а сюда пришлю понятный отчет по дню.\n\nНапиши email одним сообщением.\nПример: name@gmail.com",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        }
+      },
+      {
+        "name": "IF - Calorie Setup User Exists",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -200,
+          -40
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.user_exists }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "name": "Airtable - Update Calorie Setup Email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          40,
+          -120
+        ],
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Calorie Setup Router'].json.record_id,\n      fields: {\n        email: $node['Code - Calorie Setup Router'].json.email,\n        chat_id: $node['Code - Calorie Setup Router'].json.chat_id,\n        username: $node['Code - Calorie Setup Router'].json.username,\n        first_name: $node['Code - Calorie Setup Router'].json.first_name,\n        onboarding_status: 'creating_sheet',\n        goal_calories: Number($node['Code - Calorie Setup Router'].json.goal_calories || 2000),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Airtable - Create Calorie Setup User",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          40,
+          80
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      fields: {\n        telegram_id: $node['Code - Calorie Setup Router'].json.telegram_id,\n        chat_id: $node['Code - Calorie Setup Router'].json.chat_id,\n        username: $node['Code - Calorie Setup Router'].json.username,\n        first_name: $node['Code - Calorie Setup Router'].json.first_name,\n        email: $node['Code - Calorie Setup Router'].json.email,\n        daily_requests: 0,\n        daily_calories: 0,\n        daily_proteins: 0,\n        daily_fats: 0,\n        daily_carbs: 0,\n        daily_meals: 0,\n        goal_calories: Number($node['Code - Calorie Setup Router'].json.goal_calories || 2000),\n        status: 'free',\n        onboarding_status: 'creating_sheet',\n        created_at: new Date().toISOString(),\n        updated_at: new Date().toISOString()\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Code - Calorie Setup Record After Upsert",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          280,
+          -40
+        ],
+        "parameters": {
+          "jsCode": "const record = ($json.records || [])[0] || $json;\nif (!record?.id) throw new Error('Airtable setup record was not returned');\nconst router = $('Code - Calorie Setup Router').first().json;\nreturn [\n  {\n    json: {\n      record_id: record.id,\n      email: router.email,\n      sheet_title: router.sheet_title,\n      goal_calories: Number(router.goal_calories || 2000)\n    }\n  }\n];"
+        }
+      },
+      {
+        "name": "HTTP - Google Create Calorie Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          520,
+          -40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  properties: { title: $node['Code - Calorie Setup Record After Upsert'].json.sheet_title },\n  sheets: [\n    { properties: { title: '\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438', gridProperties: { rowCount: 1000, columnCount: 10 } } },\n    { properties: { title: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u043e\\u0439 \\u043f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441', gridProperties: { rowCount: 370, columnCount: 8 } } }\n  ]\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "HTTP - Google Initialize Calorie Headers",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          760,
+          -40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId + '/values:batchUpdate' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  valueInputOption: 'RAW',\n  data: [\n    {\n      range: '\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438!A1:J1',\n      values: [[\n        '\\u0414\\u0430\\u0442\\u0430',\n        '\\u0412\\u0440\\u0435\\u043c\\u044f',\n        '\\u041f\\u0440\\u0438\\u0435\\u043c',\n        '\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442',\n        '\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432',\n        '\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)',\n        '\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)',\n        '\\u0416\\u0438\\u0440\\u044b (\\u0433)',\n        '\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)',\n        '\\u0418\\u0442\\u043e\\u0433\\u043e \\u043a\\u043a\\u0430\\u043b \\u0437\\u0430 \\u0434\\u0435\\u043d\\u044c'\n      ]]\n    },\n    {\n      range: '\\u0414\\u043d\\u0435\\u0432\\u043d\\u043e\\u0439 \\u043f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441!A1:H1',\n      values: [[\n        '\\u0414\\u0430\\u0442\\u0430',\n        '\\u041f\\u0440\\u0438\\u0435\\u043c\\u043e\\u0432',\n        '\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438',\n        '\\u0426\\u0435\\u043b\\u044c',\n        '\\u0411\\u0435\\u043b\\u043a\\u0438',\n        '\\u0416\\u0438\\u0440\\u044b',\n        '\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b',\n        '\\u041f\\u0440\\u043e\\u0433\\u0440\\u0435\\u0441\\u0441'\n      ]]\n    }\n  ]\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "HTTP - Google Share Calorie Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1000,
+          -40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId + '/permissions?sendNotificationEmail=false' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleDriveOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  role: 'writer',\n  type: 'user',\n  emailAddress: $node['Code - Calorie Setup Record After Upsert'].json.email\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Airtable - Save Calorie Spreadsheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1240,
+          -40
+        ],
+        "parameters": {
+          "method": "PATCH",
+          "url": "https://api.airtable.com/v0/app8WwldFfIvAAmPU/tbligFZwYUZKwObcl",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  records: [\n    {\n      id: $node['Code - Calorie Setup Record After Upsert'].json.record_id,\n      fields: {\n        email: $node['Code - Calorie Setup Record After Upsert'].json.email,\n        spreadsheet_id: $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId,\n        spreadsheet_url: $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId),\n        sheet_title: $node['Code - Calorie Setup Record After Upsert'].json.sheet_title,\n        onboarding_status: 'ready',\n        sheet_created_at: new Date().toISOString(),\n        daily_calories: 0,\n        daily_proteins: 0,\n        daily_fats: 0,\n        daily_carbs: 0,\n        daily_meals: 0,\n        goal_calories: Number($node['Code - Calorie Setup Record After Upsert'].json.goal_calories || 2000),\n        updated_at: new Date().toISOString(),\n        last_result: 'Personal calorie Google Sheet created and shared with ' + $node['Code - Calorie Setup Record After Upsert'].json.email\n      }\n    }\n  ],\n  typecast: true\n}) }}",
+          "options": {}
+        }
+      },
+      {
+        "name": "Telegram - Send Calorie Setup Complete",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1480,
+          -40
+        ],
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "={{ [\n'✅ <b>Готово!</b> Личный дневник питания создан.',\n'',\n'Доступ редактора выдан на:',\n$node['Code - Calorie Setup Record After Upsert'].json.email,\n'',\n'Открыть таблицу: <a href=\"' + ($node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetUrl || ('https://docs.google.com/spreadsheets/d/' + $node['HTTP - Google Create Calorie Spreadsheet'].json.spreadsheetId)) + '\">Google Таблица</a>',\n'',\n'Теперь просто отправь голосовое: что съел, примерное количество и напитки. Я посчитаю калории, БЖУ и покажу прогресс за день.'\n].join('\\n') }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        }
+      },
+      {
+        "name": "Telegram - Send Calorie Setup Error",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          760,
+          200
+        ],
+        "parameters": {
+          "chatId": "={{ $node['Telegram Trigger'].json.message.chat.id }}",
+          "text": "Не получилось создать Google Таблицу или дать доступ. Проверь email и попробуй еще раз. Если ошибка повторится, нужно переподключить Google Sheets/Drive credentials в n8n.",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        }
+      },
+      {
+        "name": "HTTP - Google Append Meal Row",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2200,
+          -40
+        ],
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000,
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $node['Code - Normalize Airtable Limit'].json.spreadsheet_id + '/values/' + encodeURIComponent('\\u041f\\u0440\\u0438\\u0435\\u043c\\u044b \\u043f\\u0438\\u0449\\u0438!A:J') + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS' }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  values: [[\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0430\\u0442\\u0430'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0412\\u0440\\u0435\\u043c\\u044f'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041f\\u0440\\u0438\\u0435\\u043c'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 \\u0442\\u0435\\u043a\\u0441\\u0442'],\n    $node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0414\\u0435\\u0442\\u0430\\u043b\\u0438\\u0437\\u0430\\u0446\\u0438\\u044f \\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442\\u043e\\u0432'],\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u041a\\u0430\\u043b\\u043e\\u0440\\u0438\\u0438 (\\u043a\\u043a\\u0430\\u043b)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0411\\u0435\\u043b\\u043a\\u0438 (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0416\\u0438\\u0440\\u044b (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0423\\u0433\\u043b\\u0435\\u0432\\u043e\\u0434\\u044b (\\u0433)'] || 0),\n    Number($node['Code - Prepare Sheet Row and Telegram Report'].json['\\u0418\\u0442\\u043e\\u0433\\u043e \\u043a\\u043a\\u0430\\u043b \\u0437\\u0430 \\u0434\\u0435\\u043d\\u044c'] || 0)\n  ]]\n}) }}",
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Find User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Incoming Audio": {
+        "main": [
+          [
+            {
+              "node": "Code - Normalize Airtable Limit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - Audio Too Large": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Audio Too Long",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Download Audio File",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram - Download Audio File": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - Whisper Transcription",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - Whisper Transcription": {
+        "main": [
+          [
+            {
+              "node": "Code - Validate Transcription",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Validate Transcription": {
+        "main": [
+          [
+            {
+              "node": "IF - Transcription OK",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - Transcription OK": {
+        "main": [
+          [
+            {
+              "node": "OpenAI - GPT-4o-mini Calorie JSON",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Unclear Audio",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI - GPT-4o-mini Calorie JSON": {
+        "main": [
+          [
+            {
+              "node": "Code - Prepare Sheet Row and Telegram Report",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send AI Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Prepare Sheet Row and Telegram Report": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Append Meal Row",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Find User": {
+        "main": [
+          [
+            {
+              "node": "Code - Calorie Setup Router",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Normalize Airtable Limit": {
+        "main": [
+          [
+            {
+              "node": "Switch - Limit Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Limit Check": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Limit Exhausted",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "IF - Audio Too Large",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Update Limit and Log": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger - Airtable Daily Reset 00:00": {
+        "main": [
+          [
+            {
+              "node": "Airtable - List Free Users For Reset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - List Free Users For Reset": {
+        "main": [
+          [
+            {
+              "node": "Code - Build Reset Batches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Build Reset Batches": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Reset Daily Requests",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Calorie Setup Router": {
+        "main": [
+          [
+            {
+              "node": "Switch - Calorie Setup Route",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch - Calorie Setup Route": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Ask Email For Calorie Sheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "IF - Calorie Setup User Exists",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Code - Normalize Incoming Audio",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Voice Only Help",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF - Calorie Setup User Exists": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Update Calorie Setup Email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Airtable - Create Calorie Setup User",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Update Calorie Setup Email": {
+        "main": [
+          [
+            {
+              "node": "Code - Calorie Setup Record After Upsert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Create Calorie Setup User": {
+        "main": [
+          [
+            {
+              "node": "Code - Calorie Setup Record After Upsert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code - Calorie Setup Record After Upsert": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Create Calorie Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Create Calorie Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Initialize Calorie Headers",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Calorie Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Initialize Calorie Headers": {
+        "main": [
+          [
+            {
+              "node": "HTTP - Google Share Calorie Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Calorie Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Share Calorie Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Save Calorie Spreadsheet",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Calorie Setup Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Airtable - Save Calorie Spreadsheet": {
+        "main": [
+          [
+            {
+              "node": "Telegram - Send Calorie Setup Complete",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP - Google Append Meal Row": {
+        "main": [
+          [
+            {
+              "node": "Airtable - Update Limit and Log",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram - Send Sheet Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Mihail Rogal",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-07-24T11:35:08.238Z",
+        "workflowId": "nMWMNxTH1GAOp7kA",
+        "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+        "event": "activated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-24T11:36:58.504Z",
+        "workflowId": "nMWMNxTH1GAOp7kA",
+        "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+        "event": "activated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-24T11:35:07.980Z",
+        "workflowId": "nMWMNxTH1GAOp7kA",
+        "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+        "event": "deactivated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      },
+      {
+        "createdAt": "2026-07-24T11:36:58.351Z",
+        "workflowId": "nMWMNxTH1GAOp7kA",
+        "versionId": "692cffeb-6503-4c1a-8c7a-5f9ed3e85804",
+        "event": "deactivated",
+        "userId": "6c6418e9-810d-4aab-90d9-c3107b820963"
+      }
+    ]
+  }
+}
